@@ -240,8 +240,11 @@
 
 <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
 <script>
-    const pathParts = window.location.pathname.split('/').filter(p => p);
-    const basePath = pathParts.length > 0 && !pathParts[0].includes('.') ? '/' + pathParts[0] : '';
+    // basePath: alles vor dem letzten Segment (z.B. '/voiceai' wenn URL='/voiceai/')
+    const pathSegments = window.location.pathname.replace(/\/$/, '').split('/').filter(p => p);
+    // Wenn die Seite von /voiceai/ oder /voiceai geladen wird → basePath = '/voiceai'
+    // Wenn von / → basePath = ''
+    const basePath = pathSegments.length > 0 ? '/' + pathSegments[0] : '';
     const socket = io({ path: basePath + '/socket.io' });
     const chat = document.getElementById('chat');
     const textInput = document.getElementById('text-input');
