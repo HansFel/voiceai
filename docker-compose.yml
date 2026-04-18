@@ -1,0 +1,10 @@
+services:
+  voiceai:
+    build: .
+    container_name: voiceai
+    ports:
+      - "5010:5000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+    restart: unless-stopped

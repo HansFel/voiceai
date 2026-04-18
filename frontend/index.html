@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>VoiceAI</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f0f0f;
+            color: #e0e0e0;
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: #1a1a1a;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid #333;
+        }
+
+        header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            flex: 1;
+        }
+
+        #model-select {
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 13px;
+            max-width: 180px;
+        }
+
+        #status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #555;
+        }
+        #status-dot.connected { background: #4caf50; }
+        #status-dot.thinking { background: #ff9800; animation: pulse 1s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        #chat {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .msg {
+            max-width: 85%;
+            padding: 10px 14px;
+            border-radius: 16px;
+            font-size: 15px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .msg.user {
+            background: #2563eb;
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+
+        .msg.ai {
+            background: #1e1e1e;
+            border: 1px solid #333;
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+
+        .msg.error {
+            background: #3b1a1a;
+            border: 1px solid #7f1d1d;
+            color: #fca5a5;
+            align-self: center;
+            font-size: 13px;
+        }
+
+        .msg-label {
+            font-size: 11px;
+            opacity: 0.5;
+            margin-bottom: 4px;
+        }
+
+        footer {
+            background: #1a1a1a;
+            border-top: 1px solid #333;
+            padding: 12px 16px;
+        }
+
+        #input-row {
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+        }
+
+        #text-input {
+            flex: 1;
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            border-radius: 12px;
+            padding: 10px 14px;
+            font-size: 15px;
+            resize: none;
+            max-height: 120px;
+            min-height: 44px;
+            outline: none;
+        }
+
+        #text-input:focus { border-color: #2563eb; }
+
+        .btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        #mic-btn {
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+        }
+
+        #mic-btn.recording {
+            background: #dc2626;
+            color: white;
+            border-color: #dc2626;
+            animation: pulse 1s infinite;
+        }
+
+        #send-btn {
+            background: #2563eb;
+            color: white;
+        }
+
+        #send-btn:disabled {
+            background: #1e3a5f;
+            cursor: not-allowed;
+        }
+
+        #tts-btn {
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            font-size: 14px;
+        }
+
+        #tts-btn.active {
+            background: #166534;
+            border-color: #166534;
+            color: white;
+        }
+
+        #clear-btn {
+            background: transparent;
+            color: #666;
+            border: none;
+            font-size: 13px;
+            padding: 4px 8px;
+            cursor: pointer;
+            width: auto;
+            height: auto;
+            border-radius: 6px;
+        }
+
+        #controls-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        #speech-status {
+            font-size: 12px;
+            color: #888;
+            min-height: 16px;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <div id="status-dot"></div>
+    <h1>VoiceAI</h1>
+    <select id="model-select">
+        <option value="">Laden...</option>
+    </select>
+</header>
+
+<div id="chat">
+    <div class="msg ai">
+        <div class="msg-label">VoiceAI</div>
+        Hallo! Ich bin bereit. Tippe oder sprich deine Frage.
+    </div>
+</div>
+
+<footer>
+    <div id="controls-row">
+        <span id="speech-status"></span>
+        <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn" id="tts-btn" title="Vorlesen ein/aus">🔊</button>
+            <button id="clear-btn">Chat leeren</button>
+        </div>
+    </div>
+    <div id="input-row">
+        <button class="btn" id="mic-btn" title="Spracheingabe">🎤</button>
+        <textarea id="text-input" placeholder="Nachricht..." rows="1"></textarea>
+        <button class="btn" id="send-btn" title="Senden">➤</button>
+    </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+<script>
+    const socket = io();
+    const chat = document.getElementById('chat');
+    const textInput = document.getElementById('text-input');
+    const sendBtn = document.getElementById('send-btn');
+    const micBtn = document.getElementById('mic-btn');
+    const ttsBtn = document.getElementById('tts-btn');
+    const clearBtn = document.getElementById('clear-btn');
+    const modelSelect = document.getElementById('model-select');
+    const statusDot = document.getElementById('status-dot');
+    const speechStatus = document.getElementById('speech-status');
+
+    let messages = [];
+    let ttsEnabled = true;
+    let recognition = null;
+    let isRecording = false;
+
+    // Socket.IO
+    socket.on('connect', () => {
+        statusDot.className = 'connected';
+        loadModels();
+    });
+
+    socket.on('disconnect', () => {
+        statusDot.className = '';
+    });
+
+    socket.on('response', (data) => {
+        statusDot.className = 'connected';
+        addMessage('ai', data.text, data.model);
+        messages.push({ role: 'assistant', content: data.text });
+        if (ttsEnabled) speak(data.text);
+        sendBtn.disabled = false;
+    });
+
+    socket.on('error', (data) => {
+        statusDot.className = 'connected';
+        addMessage('error', '⚠️ ' + data.message);
+        sendBtn.disabled = false;
+    });
+
+    // Models
+    async function loadModels() {
+        const res = await fetch('/api/models');
+        const models = await res.json();
+        modelSelect.innerHTML = models.map(m =>
+            `<option value="${m.id}" data-provider="${m.provider}">${m.name}</option>`
+        ).join('');
+        if (!models.length) {
+            modelSelect.innerHTML = '<option value="">Kein API-Key</option>';
+        }
+    }
+
+    // Chat
+    function addMessage(role, text, model) {
+        const div = document.createElement('div');
+        div.className = 'msg ' + role;
+        if (role === 'ai') {
+            const label = document.createElement('div');
+            label.className = 'msg-label';
+            label.textContent = model || 'AI';
+            div.appendChild(label);
+        }
+        const content = document.createTextNode(text);
+        div.appendChild(content);
+        chat.appendChild(div);
+        chat.scrollTop = chat.scrollHeight;
+    }
+
+    function sendMessage(text) {
+        if (!text.trim()) return;
+        addMessage('user', text);
+        messages.push({ role: 'user', content: text });
+
+        const selected = modelSelect.selectedOptions[0];
+        const model = selected?.value || '';
+        const provider = selected?.dataset.provider || 'anthropic';
+
+        statusDot.className = 'thinking';
+        sendBtn.disabled = true;
+
+        socket.emit('chat', { messages, model, provider });
+        textInput.value = '';
+        textInput.style.height = 'auto';
+    }
+
+    sendBtn.addEventListener('click', () => sendMessage(textInput.value));
+
+    textInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage(textInput.value);
+        }
+    });
+
+    textInput.addEventListener('input', () => {
+        textInput.style.height = 'auto';
+        textInput.style.height = Math.min(textInput.scrollHeight, 120) + 'px';
+    });
+
+    clearBtn.addEventListener('click', () => {
+        messages = [];
+        chat.innerHTML = '';
+        addMessage('ai', 'Chat geleert. Wie kann ich helfen?');
+    });
+
+    // TTS
+    ttsBtn.addEventListener('click', () => {
+        ttsEnabled = !ttsEnabled;
+        ttsBtn.className = 'btn' + (ttsEnabled ? ' active' : '');
+        if (!ttsEnabled) speechSynthesis.cancel();
+    });
+    ttsBtn.className = 'btn active';
+
+    function speak(text) {
+        speechSynthesis.cancel();
+        const clean = text.replace(/```[\s\S]*?```/g, 'Code-Block').replace(/[*_`#]/g, '');
+        const utt = new SpeechSynthesisUtterance(clean.substring(0, 500));
+        utt.lang = 'de-DE';
+        utt.rate = 1.1;
+        speechSynthesis.speak(utt);
+    }
+
+    // STT
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+        recognition = new SpeechRecognition();
+        recognition.lang = 'de-DE';
+        recognition.continuous = false;
+        recognition.interimResults = true;
+
+        recognition.onstart = () => {
+            isRecording = true;
+            micBtn.className = 'btn recording';
+            speechStatus.textContent = '🎤 Aufnahme läuft...';
+        };
+
+        recognition.onresult = (e) => {
+            const transcript = Array.from(e.results)
+                .map(r => r[0].transcript).join('');
+            textInput.value = transcript;
+            if (e.results[e.results.length - 1].isFinal) {
+                speechStatus.textContent = '✓ Erkannt';
+            }
+        };
+
+        recognition.onend = () => {
+            isRecording = false;
+            micBtn.className = 'btn';
+            setTimeout(() => speechStatus.textContent = '', 2000);
+        };
+
+        recognition.onerror = (e) => {
+            isRecording = false;
+            micBtn.className = 'btn';
+            speechStatus.textContent = '⚠️ ' + e.error;
+        };
+
+        micBtn.addEventListener('click', () => {
+            if (isRecording) {
+                recognition.stop();
+            } else {
+                recognition.start();
+            }
+        });
+    } else {
+        micBtn.disabled = true;
+        micBtn.title = 'Spracherkennung nicht unterstützt';
+        speechStatus.textContent = 'Spracherkennung nur in Chrome/Edge verfügbar';
+    }
+</script>
+</body>
+</html>
