@@ -240,7 +240,9 @@
 
 <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
 <script>
-    const socket = io();
+    const pathParts = window.location.pathname.split('/').filter(p => p);
+    const basePath = pathParts.length > 0 && !pathParts[0].includes('.') ? '/' + pathParts[0] : '';
+    const socket = io({ path: basePath + '/socket.io' });
     const chat = document.getElementById('chat');
     const textInput = document.getElementById('text-input');
     const sendBtn = document.getElementById('send-btn');
@@ -282,7 +284,7 @@
 
     // Models
     async function loadModels() {
-        const res = await fetch('/api/models');
+        const res = await fetch(basePath + '/api/models');
         const models = await res.json();
         modelSelect.innerHTML = models.map(m =>
             `<option value="${m.id}" data-provider="${m.provider}">${m.name}</option>`
