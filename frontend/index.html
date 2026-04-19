@@ -527,7 +527,17 @@
         if (!models.length) {
             modelSelect.innerHTML = '<option value="">Kein API-Key</option>';
         }
+        // Zuletzt verwendetes Modell wiederherstellen
+        const saved = localStorage.getItem('voiceai_model');
+        if (saved) {
+            const opt = modelSelect.querySelector(`option[value="${saved}"]`);
+            if (opt) opt.selected = true;
+        }
     }
+
+    modelSelect.addEventListener('change', () => {
+        localStorage.setItem('voiceai_model', modelSelect.value);
+    });
 
     // Markdown Code-Blöcke rendern
     function renderText(text) {
