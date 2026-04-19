@@ -549,9 +549,15 @@ def admin_user_action(email, action):
     if not user:
         return jsonify({'error': 'Nicht gefunden'}), 404
     if action == 'pw_reset':
-        # Passwort-Hash löschen → User muss beim nächsten Login neues Passwort setzen
-        upsert_user(email, password_hash=None)
-        return jsonify({'ok': True, 'msg': f'Passwort für {email} zurückgesetzt. User muss beim nächsten Login ein neues Passwort setzen.'})
+        upsert_user(email, password_hash=None, status='eingeladen')
+        if SMTP_USER and SMTP_PASS:
+            try:
+                token = serializer.dumps(email, salt='invite')
+                send_invite_email(email, user.get('name', ''), token)
+                return jsonify({'ok': True, 'msg': f'Passwort zurückgesetzt und Einladungslink an {email} gesendet.'})
+            except Exception as e:
+                return jsonify({'ok': True, 'msg': f'Passwort zurückgesetzt, aber Email-Versand fehlgeschlagen: {e}'})
+        return jsonify({'ok': True, 'msg': f'Passwort zurückgesetzt. Email-Versand nicht konfiguriert — User muss beim nächsten Login neues Passwort setzen.'})
     elif action == 'sperren':
         upsert_user(email, status='gesperrt')
         return jsonify({'ok': True})
