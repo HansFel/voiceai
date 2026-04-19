@@ -275,7 +275,7 @@ def admin():
                       'developer': '<span style="color:#a78bfa">developer</span>',
                       'admin': '<span style="color:#f59e0b">admin</span>'}.get(role, role)
         repos_str = ', '.join(u.get('repos', [])) or '—'
-        rows += f'''<tr>
+        rows += f'''<tr data-email="{u['email']}">
           <td>{u.get("name","")}</td>
           <td>{u["email"]}</td>
           <td>{status_badge}</td>
@@ -357,20 +357,62 @@ async function action(email, act) {{
 }}
 
 function editRole(email, currentRole, currentRepos) {{
-  const role = prompt('Rolle (user / developer / admin):', currentRole);
-  if (!role) return;
-  const repos = prompt('Erlaubte Repos (kommagetrennt, leer = alle):', currentRepos);
-  if (repos === null) return;
+  const existing = document.getElementById('role-edit-row');
+  if (existing) existing.remove();
+  const rows = document.querySelectorAll('#tbody tr');
+  let targetRow = null;
+  rows.forEach(function(r) {{ if (r.dataset.email === email) targetRow = r; }});
+  if (!targetRow) return;
+  const td = document.createElement('td');
+  td.colSpan = 7;
+  td.style.cssText = 'background:#1a1a2e;padding:12px';
+  const div = document.createElement('div');
+  div.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+  const sel = document.createElement('select');
+  sel.id = 'role-select';
+  sel.style.cssText = 'background:#2a2a2a;color:#e0e0e0;border:1px solid #444;border-radius:6px;padding:6px 10px';
+  [['user','user – nur Chat'],['developer','developer – Chat + Agent'],['admin','admin – alles']].forEach(function(o) {{
+    const opt = document.createElement('option');
+    opt.value = o[0]; opt.textContent = o[1];
+    if (o[0] === currentRole) opt.selected = true;
+    sel.appendChild(opt);
+  }});
+  const inp = document.createElement('input');
+  inp.id = 'role-repos'; inp.value = currentRepos;
+  inp.placeholder = 'z.B. agrobetrieb,gemeinschaft';
+  inp.style.cssText = 'background:#2a2a2a;color:#e0e0e0;border:1px solid #444;border-radius:6px;padding:6px 10px;flex:1;min-width:200px';
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Speichern';
+  saveBtn.style.cssText = 'background:#7c3aed;color:white;border:none;border-radius:6px;padding:6px 14px;cursor:pointer';
+  saveBtn.onclick = function() {{ saveRole(email); }};
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Abbrechen';
+  cancelBtn.style.cssText = 'background:#333;color:#e0e0e0;border:none;border-radius:6px;padding:6px 14px;cursor:pointer';
+  cancelBtn.onclick = function() {{ document.getElementById('role-edit-row').remove(); }};
+  const lbl1 = document.createElement('span'); lbl1.textContent = 'Rolle:'; lbl1.style.fontSize = '13px';
+  const lbl2 = document.createElement('span'); lbl2.textContent = 'Repos (leer = alle):'; lbl2.style.fontSize = '13px';
+  div.appendChild(lbl1); div.appendChild(sel); div.appendChild(lbl2);
+  div.appendChild(inp); div.appendChild(saveBtn); div.appendChild(cancelBtn);
+  td.appendChild(div);
+  const editRow = document.createElement('tr');
+  editRow.id = 'role-edit-row';
+  editRow.appendChild(td);
+  targetRow.after(editRow);
+}}
+
+async function saveRole(email) {{
+  const role = document.getElementById('role-select').value;
+  const reposStr = document.getElementById('role-repos').value;
+  const repos = reposStr.split(',').map(r => r.trim()).filter(r => r);
   const base = window.location.pathname.replace(/\/admin.*$/, '');
-  const repoList = repos.split(',').map(r => r.trim()).filter(r => r);
-  fetch(base + '/admin/users/' + encodeURIComponent(email) + '/rolle', {{
+  const r = await fetch(base + '/admin/users/' + encodeURIComponent(email) + '/rolle', {{
     method: 'POST',
     headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{role, repos: repoList}})
-  }}).then(r => r.json()).then(d => {{
-    if (d.ok) location.reload();
-    else alert(d.error);
+    body: JSON.stringify({{role, repos}})
   }});
+  const d = await r.json();
+  if (d.ok) location.reload();
+  else alert(d.error);
 }}
 </script></body></html>'''
 
