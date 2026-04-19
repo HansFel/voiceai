@@ -413,7 +413,13 @@ button{{border:none;border-radius:6px;padding:5px 10px;font-size:12px;cursor:poi
 border-radius:8px;padding:8px 12px;font-size:14px;outline:none;flex:1;min-width:140px}}
 .add-form button{{background:#7c3aed;color:white;padding:8px 16px;font-size:14px}}
 #msg{{margin-top:10px;font-size:13px;color:#4ade80}}
+#banner{{display:none;position:fixed;top:16px;left:50%;transform:translateX(-50%);
+background:#1e1e1e;border:1px solid #444;border-radius:10px;padding:12px 24px;
+font-size:14px;z-index:999;box-shadow:0 4px 20px #000a}}
+#banner.ok{{border-color:#4ade80;color:#4ade80}}
+#banner.err{{border-color:#f87171;color:#f87171}}
 </style></head><body>
+<div id="banner"></div>
 <h2>🎤 VoiceAI – Nutzerverwaltung</h2>
 
 <div class="card">
@@ -453,14 +459,16 @@ async function action(email, act) {{
   const base = window.location.pathname.replace(/[/]admin.*$/, '');
   const r = await fetch(base + '/admin/users/' + encodeURIComponent(email) + '/' + act, {{method:'POST', headers:{{'Content-Type':'application/json'}}}});
   const d = await r.json();
-  const msg = document.getElementById('msg');
+  const banner = document.getElementById('banner');
   if (r.ok) {{
-    msg.textContent = '✓ ' + (d.msg || 'Erledigt');
-    msg.style.color = '#4ade80';
+    banner.textContent = '✓ ' + (d.msg || 'Erledigt');
+    banner.className = 'ok';
+    banner.style.display = 'block';
     setTimeout(() => location.reload(), 2500);
   }} else {{
-    msg.textContent = '⚠️ ' + (d.error || 'Fehler');
-    msg.style.color = '#f87171';
+    banner.textContent = '⚠️ ' + (d.error || 'Fehler');
+    banner.className = 'err';
+    banner.style.display = 'block';
   }}
 }}
 
