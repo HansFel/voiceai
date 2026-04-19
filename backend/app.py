@@ -172,6 +172,23 @@ const base = window.location.pathname.replace(/[/]login$/, '');
 let step = 'email';
 document.getElementById('email').addEventListener('keydown', e => { if(e.key==='Enter') checkEmail(); });
 document.getElementById('password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+// Einladungslink: Email vorausfüllen und Passwort-Feld direkt zeigen
+(function() {
+  const p = new URLSearchParams(window.location.search);
+  if (p.get('err') === 'link_abgelaufen') document.getElementById('err').textContent = 'Einladungslink abgelaufen. Bitte beim Administrator anfragen.';
+  if (p.get('err') === 'kein_zugang') document.getElementById('err').textContent = 'Kein Zugang.';
+  if (p.get('set') === '1' && p.get('email')) {
+    const emailEl = document.getElementById('email');
+    emailEl.value = p.get('email');
+    emailEl.readOnly = true;
+    document.getElementById('nopw-row').style.display = 'none';
+    document.getElementById('pw-row').style.display = 'block';
+    document.getElementById('subtitle').textContent = 'Passwort festlegen';
+    document.getElementById('password').placeholder = 'Neues Passwort wählen (mind. 6 Zeichen)';
+    document.getElementById('password').focus();
+    step = 'set';
+  }
+})();
 async function checkEmail() {
   const email = document.getElementById('email').value.trim();
   const err = document.getElementById('err');
@@ -270,6 +287,25 @@ def _do_login_session(email):
     session['email'] = email
     session['role'] = user.get('role', 'user')
     session['repos'] = user.get('repos', [])
+
+
+@app.route('/auth')
+def auth():
+    """Alter Einladungslink — leitet zur Login-Seite weiter."""
+    token = request.args.get('token', '')
+    try:
+        email = serializer.loads(token, salt='invite', max_age=86400)
+        user = get_user(email)
+        if not user or user.get('status') == 'gesperrt':
+            return redirect(APP_URL + '/login?err=kein_zugang')
+        # Wenn noch kein Passwort gesetzt → direkt einloggen und PW setzen lassen
+        if not user.get('password_hash'):
+            _do_login_session(email)
+            upsert_user(email, status='aktiv')
+            return redirect(APP_URL + '/login?set=1&email=' + email)
+        return redirect(APP_URL + '/login')
+    except (SignatureExpired, BadSignature):
+        return redirect(APP_URL + '/login?err=link_abgelaufen')
 
 
 @app.route('/logout')
