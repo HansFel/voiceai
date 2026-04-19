@@ -260,6 +260,38 @@
             color: white;
         }
 
+        #helpdesk-wrap {
+            position: relative;
+            display: none;
+        }
+
+        #helpdesk-dropdown {
+            position: absolute;
+            bottom: calc(100% + 6px);
+            right: 0;
+            background: #1e1e1e;
+            border: 1px solid #444;
+            border-radius: 8px;
+            min-width: 220px;
+            z-index: 100;
+            overflow: hidden;
+            display: none;
+        }
+
+        #helpdesk-dropdown.open { display: block; }
+
+        .hd-option {
+            padding: 8px 14px;
+            font-size: 13px;
+            cursor: pointer;
+            color: #e0e0e0;
+            border-bottom: 1px solid #333;
+        }
+        .hd-option:last-child { border-bottom: none; }
+        .hd-option:hover { background: #2a2a2a; }
+        .hd-option.selected { color: #38bdf8; }
+        .hd-option.off { color: #888; }
+
         .msg.agent-status {
             background: #1a1a2e;
             border: 1px solid #7c3aed33;
@@ -291,7 +323,10 @@
     <div id="controls-row">
         <span id="speech-status"></span>
         <div style="display:flex;gap:6px;align-items:center">
-            <button id="helpdesk-btn" title="Helpdesk-Modus (Agrargemeinschaft-Docs)" style="display:none">📋 Helpdesk</button>
+            <div id="helpdesk-wrap">
+                <button id="helpdesk-btn" title="Helpdesk-Modus – Repo wählen">📋 Helpdesk</button>
+                <div id="helpdesk-dropdown"></div>
+            </div>
             <button id="agent-btn" title="Agent-Modus (Repo-Zugriff)">🤖 Agent</button>
             <button class="btn" id="tts-btn" title="Vorlesen ein/aus">🔊</button>
             <button id="clear-btn">Chat leeren</button>
@@ -329,9 +364,12 @@
     let autoListen = false;
     let agentMode = false;
     let helpdeskMode = false;
+    let helpdeskRepo = null;
     let userRole = 'user';
     const agentBtn = document.getElementById('agent-btn');
     const helpdeskBtn = document.getElementById('helpdesk-btn');
+    const helpdeskWrap = document.getElementById('helpdesk-wrap');
+    const helpdeskDropdown = document.getElementById('helpdesk-dropdown');
 
     // Rolle laden
     async function loadMe() {
@@ -341,15 +379,78 @@
             userRole = me.role || 'user';
             if (userRole === 'user') {
                 agentBtn.style.display = 'none';
-                helpdeskBtn.style.display = 'none';
+                helpdeskWrap.style.display = 'none';
             } else {
-                helpdeskBtn.style.display = '';
-                // Gespeicherten Helpdesk-Status wiederherstellen
+                helpdeskWrap.style.display = '';
                 helpdeskMode = me.helpdesk_mode || false;
-                helpdeskBtn.className = helpdeskMode ? 'active' : '';
+                helpdeskRepo = me.helpdesk_repo || null;
+                updateHelpdeskBtn();
+                if (helpdeskMode) loadHelpdeskRepos();
             }
         } catch(e) {}
     }
+
+    function updateHelpdeskBtn() {
+        helpdeskBtn.className = helpdeskMode ? 'active' : '';
+        if (helpdeskMode && helpdeskRepo) {
+            const name = helpdeskRepo.split('/').pop();
+            helpdeskBtn.textContent = '📋 ' + name;
+        } else if (helpdeskMode) {
+            helpdeskBtn.textContent = '📋 Helpdesk';
+        } else {
+            helpdeskBtn.textContent = '📋 Helpdesk';
+        }
+    }
+
+    async function loadHelpdeskRepos() {
+        try {
+            const res = await fetch(basePath + '/api/helpdesk-repos');
+            const repos = await res.json();
+            helpdeskDropdown.innerHTML = '';
+            // "Aus"-Option
+            const off = document.createElement('div');
+            off.className = 'hd-option off' + (!helpdeskMode ? ' selected' : '');
+            off.textContent = '✕ Helpdesk aus';
+            off.onclick = () => setHelpdeskRepo(false, null);
+            helpdeskDropdown.appendChild(off);
+            // Repo-Optionen
+            repos.forEach(r => {
+                const el = document.createElement('div');
+                el.className = 'hd-option' + (helpdeskRepo === r.path ? ' selected' : '');
+                el.textContent = '📋 ' + r.repo;
+                el.onclick = () => setHelpdeskRepo(true, r.path, r.repo);
+                helpdeskDropdown.appendChild(el);
+            });
+            helpdeskDropdown.classList.add('open');
+        } catch(e) {}
+    }
+
+    async function setHelpdeskRepo(enabled, path, repoName) {
+        helpdeskMode = enabled;
+        helpdeskRepo = path;
+        helpdeskDropdown.classList.remove('open');
+        updateHelpdeskBtn();
+        try {
+            await fetch(basePath + '/api/helpdesk-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled, repo: path }),
+            });
+        } catch(e) {}
+        if (enabled) {
+            const label = repoName || 'Helpdesk';
+            addMessage('ai', `📋 Helpdesk aktiv: ${label}`);
+        } else {
+            addMessage('ai', '📋 Helpdesk deaktiviert.');
+        }
+    }
+
+    // Dropdown schließen bei Klick außerhalb
+    document.addEventListener('click', (e) => {
+        if (!helpdeskWrap.contains(e.target)) {
+            helpdeskDropdown.classList.remove('open');
+        }
+    });
 
     // Socket.IO
     socket.on('connect', () => {
@@ -512,21 +613,13 @@
         }
     });
 
-    // Helpdesk-Button
-    helpdeskBtn.addEventListener('click', async () => {
-        helpdeskMode = !helpdeskMode;
-        helpdeskBtn.className = helpdeskMode ? 'active' : '';
-        try {
-            await fetch(basePath + '/api/helpdesk-mode', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled: helpdeskMode }),
-            });
-        } catch(e) {}
-        if (helpdeskMode) {
-            addMessage('ai', '📋 Helpdesk-Modus aktiv. Ich beantworte Fragen zur Agrargemeinschaft-Software anhand der Dokumentation.');
+    // Helpdesk-Button — Dropdown öffnen/schließen
+    helpdeskBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (helpdeskDropdown.classList.contains('open')) {
+            helpdeskDropdown.classList.remove('open');
         } else {
-            addMessage('ai', '📋 Helpdesk-Modus deaktiviert.');
+            loadHelpdeskRepos();
         }
     });
 

@@ -493,19 +493,33 @@ def me():
         'repos': session.get('repos', []),
         'email': session.get('email', ''),
         'helpdesk_mode': session.get('helpdesk_mode', False),
+        'helpdesk_repo': session.get('helpdesk_repo', None),
     })
 
 
 @app.route('/api/helpdesk-mode', methods=['POST'])
 @require_auth
 def toggle_helpdesk_mode():
-    """Nur für Admin/Developer: Helpdesk-Modus in der Session umschalten."""
+    """Nur für Admin/Developer: Helpdesk-Modus + Repo in der Session setzen."""
     role = session.get('role', 'user')
     if role == 'user':
         return jsonify({'error': 'Nicht erlaubt'}), 403
     enabled = request.json.get('enabled', False)
+    repo = request.json.get('repo', None)  # Repo-Pfad oder None
     session['helpdesk_mode'] = bool(enabled)
-    return jsonify({'helpdesk_mode': session['helpdesk_mode']})
+    session['helpdesk_repo'] = repo if enabled else None
+    return jsonify({'helpdesk_mode': session['helpdesk_mode'], 'helpdesk_repo': session['helpdesk_repo']})
+
+
+@app.route('/api/helpdesk-repos')
+@require_auth
+def helpdesk_repos():
+    """Listet alle Repos mit .voiceai.md auf."""
+    repos = find_repos_with_voiceai()
+    # Füge docs/-Fallback hinzu falls vorhanden
+    if os.path.exists(DOCS_BASE) and any(f.endswith('.md') for f in os.listdir(DOCS_BASE)):
+        repos.insert(0, {'repo': '(lokale Docs)', 'path': None})
+    return jsonify(repos)
 
 
 @app.route('/api/models')
@@ -763,8 +777,41 @@ def run_agent_mistral(messages, model, system, allowed_repos):
 
 DOCS_BASE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'docs')
 
+VOICEAI_FILENAME = '.voiceai.md'
+
+def find_repos_with_voiceai():
+    """Gibt alle Repos zurück die eine .voiceai.md im Root haben."""
+    result = []
+    if not os.path.exists(REPOS_BASE):
+        return result
+    for top in sorted(os.listdir(REPOS_BASE)):
+        top_path = os.path.join(REPOS_BASE, top)
+        if not os.path.isdir(top_path):
+            continue
+        # Direkt im top-level (z.B. /repos/home/agrobetrieb)
+        vf = os.path.join(top_path, VOICEAI_FILENAME)
+        if os.path.isfile(vf):
+            result.append({'repo': top, 'path': top_path})
+        # Eine Ebene tiefer (z.B. /repos/docker/agrobetrieb)
+        for sub in sorted(os.listdir(top_path)):
+            sub_path = os.path.join(top_path, sub)
+            if os.path.isdir(sub_path):
+                vf2 = os.path.join(sub_path, VOICEAI_FILENAME)
+                if os.path.isfile(vf2):
+                    result.append({'repo': f"{top}/{sub}", 'path': sub_path})
+    return result
+
+def load_voiceai_md(repo_path):
+    """Liest .voiceai.md aus einem Repo-Pfad."""
+    vf = os.path.join(repo_path, VOICEAI_FILENAME)
+    try:
+        with open(vf, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception:
+        return None
+
 def load_docs():
-    """Lädt alle Markdown-Dateien aus dem docs/ Ordner."""
+    """Lädt alle Markdown-Dateien aus dem docs/ Ordner (Fallback)."""
     docs = []
     if os.path.exists(DOCS_BASE):
         for f in sorted(os.listdir(DOCS_BASE)):
@@ -776,18 +823,30 @@ def load_docs():
                     pass
     return '\n\n---\n\n'.join(docs)
 
-def build_user_system():
-    docs = load_docs()
-    base = """Du bist ein freundlicher Helpdesk-Assistent für die Agrargemeinschaft-Software.
+def build_user_system(repo_path=None):
+    """Baut den Helpdesk-System-Prompt.
+    Wenn repo_path gesetzt: .voiceai.md aus dem Repo laden.
+    Fallback: docs/-Ordner.
+    """
+    context = None
+    app_name = "diese Software"
+
+    if repo_path:
+        context = load_voiceai_md(repo_path)
+
+    if not context:
+        context = load_docs()
+
+    base = f"""Du bist ein freundlicher Helpdesk-Assistent für {app_name}.
 Du hilfst Anwendern bei Fragen zur Bedienung. Erkläre Schritt für Schritt.
 Antworte auf Deutsch, verständlich und ohne technischen Jargon.
 Beziehe dich auf die folgende Dokumentation:\n\n"""
-    return base + docs if docs else base + "(Keine Dokumentation vorhanden)"
+    return base + context if context else base + "(Keine Dokumentation vorhanden)"
 
 
-def run_agent(messages, model='claude-sonnet-4-6', provider='anthropic', role='developer', allowed_repos=None):
+def run_agent(messages, model='claude-sonnet-4-6', provider='anthropic', role='developer', allowed_repos=None, repo_path=None):
     if role == 'user':
-        system = build_user_system()
+        system = build_user_system(repo_path=repo_path)
     else:
         system = AGENT_SYSTEMS.get(role, AGENT_SYSTEMS['developer'])
     if provider == 'mistral':
@@ -812,11 +871,12 @@ def handle_chat(data):
     provider = data.get('provider', 'anthropic')
     role = session.get('role', 'user')
     helpdesk_mode = session.get('helpdesk_mode', False)
+    helpdesk_repo = session.get('helpdesk_repo', None)
     ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
     MISTRAL_API_KEY = os.environ.get('MISTRAL_API_KEY', '')
     # Helpdesk-System-Prompt: immer für user-Rolle, für andere nur wenn Modus aktiv
     use_helpdesk = (role == 'user') or helpdesk_mode
-    system_prompt = build_user_system() if use_helpdesk else None
+    system_prompt = build_user_system(repo_path=helpdesk_repo) if use_helpdesk else None
     try:
         if provider == 'anthropic':
             if not ANTHROPIC_API_KEY:
