@@ -838,6 +838,18 @@ DOCS_BASE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'docs')
 
 VOICEAI_FILENAME = '.voiceai.md'
 
+def _voiceai_title(vf_path):
+    """Liest den Titel (erste # Zeile) aus einer .voiceai.md."""
+    try:
+        with open(vf_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('# '):
+                    return line[2:].strip()
+    except Exception:
+        pass
+    return None
+
 def find_repos_with_voiceai():
     """Gibt alle Repos zurück die eine .voiceai.md im Root haben."""
     result = []
@@ -850,14 +862,16 @@ def find_repos_with_voiceai():
         # Direkt im top-level (z.B. /repos/home/agrobetrieb)
         vf = os.path.join(top_path, VOICEAI_FILENAME)
         if os.path.isfile(vf):
-            result.append({'repo': top, 'path': top_path})
+            title = _voiceai_title(vf) or top
+            result.append({'repo': top, 'path': top_path, 'title': title})
         # Eine Ebene tiefer (z.B. /repos/docker/agrobetrieb)
         for sub in sorted(os.listdir(top_path)):
             sub_path = os.path.join(top_path, sub)
             if os.path.isdir(sub_path):
                 vf2 = os.path.join(sub_path, VOICEAI_FILENAME)
                 if os.path.isfile(vf2):
-                    result.append({'repo': f"{top}/{sub}", 'path': sub_path})
+                    title = _voiceai_title(vf2) or sub
+                    result.append({'repo': f"{top}/{sub}", 'path': sub_path, 'title': title})
     return result
 
 def load_voiceai_md(repo_path):

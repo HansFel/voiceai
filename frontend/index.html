@@ -435,8 +435,8 @@
             repos.forEach(r => {
                 const el = document.createElement('div');
                 el.className = 'hd-option' + (helpdeskRepo === r.path ? ' selected' : '');
-                el.textContent = '📋 ' + r.repo;
-                el.onclick = () => setHelpdeskRepo(true, r.path, r.repo);
+                el.textContent = '📋 ' + (r.title || r.repo);
+                el.onclick = () => setHelpdeskRepo(true, r.path, r.title || r.repo);
                 helpdeskDropdown.appendChild(el);
             });
             helpdeskDropdown.classList.add('open');
