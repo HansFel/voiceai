@@ -654,12 +654,13 @@
         }
     });
 
+    let ttsStopped = false;
+
     ttsBtn.addEventListener('click', () => {
         if (speechSynthesis.speaking) {
-            // Gerade am Sprechen → abbrechen
+            ttsStopped = true;
             speechSynthesis.cancel();
         } else {
-            // Nicht am Sprechen → ein/ausschalten
             ttsEnabled = !ttsEnabled;
             ttsBtn.className = 'btn' + (ttsEnabled ? ' active' : '');
         }
@@ -667,22 +668,22 @@
     ttsBtn.className = 'btn active';
 
     function speak(text, onEnd) {
+        ttsStopped = false;
         speechSynthesis.cancel();
         const clean = text
             .replace(/```[\s\S]*?```/g, 'Code-Block')
             .replace(/[*_`#|]/g, '')
             .replace(/\n+/g, ' ')
             .trim();
-        // In Sätze aufteilen (Browser bricht bei langen Utterances ab)
         const sentences = clean.match(/[^.!?]+[.!?]+/g) || [clean];
         let i = 0;
         function next() {
-            if (i >= sentences.length) { if (onEnd) onEnd(); return; }
+            if (ttsStopped || i >= sentences.length) { if (onEnd && !ttsStopped) onEnd(); return; }
             const utt = new SpeechSynthesisUtterance(sentences[i++].trim());
             utt.lang = 'de-DE';
             utt.rate = 1.1;
             utt.onend = next;
-            utt.onerror = next; // bei Fehler trotzdem weitermachen
+            utt.onerror = (e) => { if (e.error !== 'interrupted') next(); };
             speechSynthesis.speak(utt);
         }
         next();
