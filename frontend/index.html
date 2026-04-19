@@ -619,7 +619,7 @@
         if (agentMode) {
             socket.emit('agent', { messages, model, provider });
         } else {
-            socket.emit('chat', { messages, model, provider });
+            socket.emit('chat', { messages, model, provider, helpdesk_repo: helpdeskMode ? helpdeskRepo : null });
         }
         textInput.value = '';
         textInput.style.height = 'auto';

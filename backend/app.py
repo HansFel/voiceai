@@ -1000,13 +1000,12 @@ def handle_chat(data):
     model_id = data.get('model', 'claude-sonnet-4-6')
     provider = data.get('provider', 'anthropic')
     role = session.get('role', 'user')
-    helpdesk_mode = session.get('helpdesk_mode', False)
-    helpdesk_repo = session.get('helpdesk_repo', None)
+    # helpdesk_repo vom Client (zuverlässiger als Session bei Socket.IO)
+    helpdesk_repo = data.get('helpdesk_repo') or session.get('helpdesk_repo', None)
+    helpdesk_mode = bool(helpdesk_repo) or (role == 'user')
     ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
     MISTRAL_API_KEY = os.environ.get('MISTRAL_API_KEY', '')
-    # Helpdesk-System-Prompt: immer für user-Rolle, für andere nur wenn Modus aktiv
-    use_helpdesk = (role == 'user') or helpdesk_mode
-    system_prompt = build_user_system(repo_path=helpdesk_repo) if use_helpdesk else None
+    system_prompt = build_user_system(repo_path=helpdesk_repo) if helpdesk_mode else None
     try:
         if provider == 'anthropic':
             if not ANTHROPIC_API_KEY:
