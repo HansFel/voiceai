@@ -168,7 +168,7 @@ padding:12px;font-size:15px;cursor:pointer;margin-bottom:8px}
   </div>
 </div>
 <script>
-const base = window.location.pathname.replace(/\/login$/, '');
+const base = window.location.pathname.replace(/[/]login$/, '');
 let step = 'email';
 document.getElementById('email').addEventListener('keydown', e => { if(e.key==='Enter') checkEmail(); });
 document.getElementById('password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
@@ -403,7 +403,7 @@ async function addUser() {{
   const email = document.getElementById('new-email').value.trim();
   const msg = document.getElementById('msg');
   if (!email) return;
-  const base = window.location.pathname.replace(/\/admin.*$/, '');
+  const base = window.location.pathname.replace(/[/]admin.*$/, '');
   const r = await fetch(base + '/admin/users', {{method:'POST',
     headers:{{'Content-Type':'application/json'}},
     body: JSON.stringify({{name, email, invite: true}})}});
@@ -414,7 +414,7 @@ async function addUser() {{
 
 async function action(email, act) {{
   if (act === 'loeschen' && !confirm('Wirklich löschen?')) return;
-  const base = window.location.pathname.replace(/\/admin.*$/, '');
+  const base = window.location.pathname.replace(/[/]admin.*$/, '');
   const r = await fetch(base + '/admin/users/' + encodeURIComponent(email) + '/' + act, {{method:'POST'}});
   const d = await r.json();
   if (r.ok) location.reload();
@@ -469,7 +469,7 @@ async function saveRole(email) {{
   const role = document.getElementById('role-select').value;
   const reposStr = document.getElementById('role-repos').value;
   const repos = reposStr.split(',').map(r => r.trim()).filter(r => r);
-  const base = window.location.pathname.replace(/\/admin.*$/, '');
+  const base = window.location.pathname.replace(/[/]admin.*$/, '');
   const r = await fetch(base + '/admin/users/' + encodeURIComponent(email) + '/rolle', {{
     method: 'POST',
     headers: {{'Content-Type': 'application/json'}},
