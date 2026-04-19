@@ -290,12 +290,26 @@
     let isRecording = false;
     let autoListen = false;
     let agentMode = false;
+    let userRole = 'user';
     const agentBtn = document.getElementById('agent-btn');
+
+    // Rolle laden
+    async function loadMe() {
+        try {
+            const res = await fetch(basePath + '/api/me');
+            const me = await res.json();
+            userRole = me.role || 'user';
+            if (userRole === 'user') {
+                agentBtn.style.display = 'none';
+            }
+        } catch(e) {}
+    }
 
     // Socket.IO
     socket.on('connect', () => {
         statusDot.className = 'connected';
         loadModels();
+        loadMe();
     });
 
     socket.on('disconnect', () => {

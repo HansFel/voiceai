@@ -16,6 +16,7 @@ load_dotenv()
 app = Flask(__name__, static_folder='../frontend', template_folder='../frontend')
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(32))
 app.permanent_session_lifetime = timedelta(hours=24)
+app.config['SESSION_COOKIE_PATH'] = '/'
 
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
@@ -53,6 +54,7 @@ def upsert_user(email, **kwargs):
     email = email.lower()
     if email not in users:
         users[email] = {'email': email, 'name': '', 'status': 'eingeladen',
+                        'role': 'user', 'repos': [],
                         'created': datetime.utcnow().isoformat(), 'last_login': None}
     users[email].update(kwargs)
     save_users(users)
@@ -196,6 +198,8 @@ def auth():
         session.permanent = True
         session['authenticated'] = True
         session['email'] = email
+        session['role'] = get_user(email).get('role', 'user')
+        session['repos'] = get_user(email).get('repos', [])
         return redirect(APP_URL + '/')
     except SignatureExpired:
         return '<h3>Link abgelaufen. Bitte neuen Link anfordern.</h3>', 403
@@ -266,13 +270,21 @@ def admin():
             sperr_btn = f'<button class="btn-warn" onclick="action(\'{u["email"]}\',\'sperren\')">Sperren</button>'
         else:
             sperr_btn = f'<button class="btn-ok" onclick="action(\'{u["email"]}\',\'entsperren\')">Entsperren</button>'
+        role = u.get('role', 'user')
+        role_badge = {'user': '<span style="color:#60a5fa">user</span>',
+                      'developer': '<span style="color:#a78bfa">developer</span>',
+                      'admin': '<span style="color:#f59e0b">admin</span>'}.get(role, role)
+        repos_str = ', '.join(u.get('repos', [])) or '—'
         rows += f'''<tr>
           <td>{u.get("name","")}</td>
           <td>{u["email"]}</td>
           <td>{status_badge}</td>
+          <td>{role_badge}</td>
+          <td style="font-size:12px;color:#888">{repos_str}</td>
           <td>{last_str}</td>
           <td style="display:flex;gap:6px;flex-wrap:wrap">
             <button class="btn-blue" onclick="action('{u["email"]}','einladen')">Einladen</button>
+            <button class="btn-purple" onclick="editRole('{u["email"]}','{role}','{",".join(u.get("repos",[]))}')">Rolle</button>
             {sperr_btn}
             <button class="btn-red" onclick="action('{u["email"]}','loeschen')">Löschen</button>
           </td>
@@ -294,6 +306,7 @@ button{{border:none;border-radius:6px;padding:5px 10px;font-size:12px;cursor:poi
 .btn-warn{{background:#d97706;color:white}}
 .btn-ok{{background:#166534;color:white}}
 .btn-red{{background:#7f1d1d;color:#fca5a5}}
+.btn-purple{{background:#7c3aed;color:white}}
 .add-form{{display:flex;gap:8px;flex-wrap:wrap}}
 .add-form input{{background:#2a2a2a;border:1px solid #444;color:#e0e0e0;
 border-radius:8px;padding:8px 12px;font-size:14px;outline:none;flex:1;min-width:140px}}
@@ -314,7 +327,7 @@ border-radius:8px;padding:8px 12px;font-size:14px;outline:none;flex:1;min-width:
 
 <div class="card">
   <table>
-    <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Letzter Login</th><th>Aktionen</th></tr></thead>
+    <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Rolle</th><th>Repos</th><th>Letzter Login</th><th>Aktionen</th></tr></thead>
     <tbody id="tbody">{rows}</tbody>
   </table>
 </div>
@@ -325,7 +338,8 @@ async function addUser() {{
   const email = document.getElementById('new-email').value.trim();
   const msg = document.getElementById('msg');
   if (!email) return;
-  const r = await fetch('users', {{method:'POST',
+  const base = window.location.pathname.replace(/\/admin.*$/, '');
+  const r = await fetch(base + '/admin/users', {{method:'POST',
     headers:{{'Content-Type':'application/json'}},
     body: JSON.stringify({{name, email, invite: true}})}});
   const d = await r.json();
@@ -335,10 +349,28 @@ async function addUser() {{
 
 async function action(email, act) {{
   if (act === 'loeschen' && !confirm('Wirklich löschen?')) return;
-  const r = await fetch('users/' + encodeURIComponent(email) + '/' + act, {{method:'POST'}});
+  const base = window.location.pathname.replace(/\/admin.*$/, '');
+  const r = await fetch(base + '/admin/users/' + encodeURIComponent(email) + '/' + act, {{method:'POST'}});
   const d = await r.json();
   if (r.ok) location.reload();
   else alert(d.error);
+}}
+
+function editRole(email, currentRole, currentRepos) {{
+  const role = prompt('Rolle (user / developer / admin):', currentRole);
+  if (!role) return;
+  const repos = prompt('Erlaubte Repos (kommagetrennt, leer = alle):', currentRepos);
+  if (repos === null) return;
+  const base = window.location.pathname.replace(/\/admin.*$/, '');
+  const repoList = repos.split(',').map(r => r.trim()).filter(r => r);
+  fetch(base + '/admin/users/' + encodeURIComponent(email) + '/rolle', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{role, repos: repoList}})
+  }}).then(r => r.json()).then(d => {{
+    if (d.ok) location.reload();
+    else alert(d.error);
+  }});
 }}
 </script></body></html>'''
 
@@ -392,6 +424,14 @@ def admin_user_action(email, action):
     elif action == 'loeschen':
         delete_user(email)
         return jsonify({'ok': True})
+    elif action == 'rolle':
+        data = request.get_json() or {}
+        role = data.get('role', 'user')
+        repos = data.get('repos', [])
+        if role not in ('user', 'developer', 'admin'):
+            return jsonify({'error': 'Ungültige Rolle'}), 400
+        upsert_user(email, role=role, repos=repos)
+        return jsonify({'ok': True})
     return jsonify({'error': 'Unbekannte Aktion'}), 400
 
 
@@ -401,6 +441,16 @@ def admin_user_action(email, action):
 @require_auth
 def index():
     return app.send_static_file('index.html')
+
+
+@app.route('/api/me')
+@require_auth
+def me():
+    return jsonify({
+        'role': session.get('role', 'user'),
+        'repos': session.get('repos', []),
+        'email': session.get('email', ''),
+    })
 
 
 @app.route('/api/models')
@@ -490,7 +540,9 @@ AGENT_TOOLS = [
 ]
 
 
-def _safe_repo_path(repo, path=''):
+def _safe_repo_path(repo, path='', allowed_repos=None):
+    if allowed_repos and not any(a.lower() in repo.lower() for a in allowed_repos):
+        raise ValueError(f"Kein Zugriff auf Repository: {repo}")
     base = os.path.realpath(REPOS_BASE)
     repo_path = os.path.realpath(os.path.join(base, repo))
     if not repo_path.startswith(base):
@@ -503,13 +555,15 @@ def _safe_repo_path(repo, path=''):
     return repo_path
 
 
-def run_tool(name, inputs):
+def run_tool(name, inputs, allowed_repos=None):
     try:
         if name == "list_repos":
             if not os.path.exists(REPOS_BASE):
                 return f"Repos-Verzeichnis nicht gefunden: {REPOS_BASE}"
             repos = [d for d in os.listdir(REPOS_BASE)
                      if os.path.isdir(os.path.join(REPOS_BASE, d)) and not d.startswith('.')]
+            if allowed_repos:
+                repos = [r for r in repos if any(a.lower() in r.lower() for a in allowed_repos)]
             return "Verfügbare Repos:\n" + "\n".join(repos) if repos else "Keine Repos gefunden."
         elif name == "read_file":
             path = _safe_repo_path(inputs['repo'], inputs['path'])
@@ -554,19 +608,25 @@ def run_tool(name, inputs):
         return f"Fehler: {str(e)}"
 
 
-AGENT_SYSTEM = """Du bist ein Entwicklungsassistent mit Zugriff auf Code-Repositories.
+AGENT_SYSTEMS = {
+    'developer': """Du bist ein Entwicklungsassistent mit Zugriff auf Code-Repositories.
 Du kannst Dateien lesen, Git-Status prüfen und Fragen über den Code beantworten.
 Antworte auf Deutsch, kurz und präzise. Bei Sprachsteuerung: keine langen Listen,
-fasse zusammen was wichtig ist."""
+fasse zusammen was wichtig ist.""",
+    'user': """Du bist ein freundlicher Helpdesk-Assistent für MGRSoftware und Agrargemeinschaft-Software.
+Du hilfst Anwendern bei Fragen zur Bedienung der Software. Erkläre Schritt für Schritt.
+Antworte auf Deutsch, verständlich und ohne technischen Jargon.""",
+}
 
 
-def run_agent(messages, model='claude-sonnet-4-6'):
+def run_agent(messages, model='claude-sonnet-4-6', role='developer', allowed_repos=None):
     import anthropic
     client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY', ''))
+    system = AGENT_SYSTEMS.get(role, AGENT_SYSTEMS['developer'])
     while True:
         response = client.messages.create(
             model=model, max_tokens=4096,
-            system=AGENT_SYSTEM, tools=AGENT_TOOLS, messages=messages,
+            system=system, tools=AGENT_TOOLS, messages=messages,
         )
         if response.stop_reason == 'end_turn':
             for block in response.content:
@@ -577,7 +637,7 @@ def run_agent(messages, model='claude-sonnet-4-6'):
             tool_results = []
             for block in response.content:
                 if block.type == 'tool_use':
-                    result = run_tool(block.name, block.input)
+                    result = run_tool(block.name, block.input, allowed_repos=allowed_repos)
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -636,12 +696,16 @@ def handle_chat(data):
 def handle_agent(data):
     messages = data.get('messages', [])
     model_id = data.get('model', 'claude-sonnet-4-6')
+    role = session.get('role', 'user')
+    allowed_repos = session.get('repos', []) or None  # None = alle erlaubt für developer
+    if role == 'user':
+        allowed_repos = []  # user hat keinen Repo-Zugriff
     if not os.environ.get('ANTHROPIC_API_KEY'):
         emit('error', {'message': 'Agent benötigt Anthropic API-Key'})
         return
     try:
         emit('agent_status', {'text': '🔍 Agent denkt...'})
-        text = run_agent(messages, model_id)
+        text = run_agent(messages, model_id, role=role, allowed_repos=allowed_repos)
         emit('response', {'text': text, 'model': model_id + ' (Agent)'})
     except Exception as e:
         emit('error', {'message': str(e)})
