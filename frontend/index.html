@@ -260,6 +260,17 @@
             color: white;
         }
 
+        #admin-link {
+            font-size: 12px;
+            color: #888;
+            text-decoration: none;
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid #444;
+            display: none;
+        }
+        #admin-link:hover { color: #e0e0e0; border-color: #666; }
+
         #helpdesk-wrap {
             position: relative;
             display: none;
@@ -307,6 +318,7 @@
 <header>
     <div id="status-dot"></div>
     <h1>VoiceAI</h1>
+    <a id="admin-link" href="">⚙ Admin</a>
     <select id="model-select">
         <option value="">Laden...</option>
     </select>
@@ -370,6 +382,7 @@
     const helpdeskBtn = document.getElementById('helpdesk-btn');
     const helpdeskWrap = document.getElementById('helpdesk-wrap');
     const helpdeskDropdown = document.getElementById('helpdesk-dropdown');
+    const adminLink = document.getElementById('admin-link');
 
     // Rolle laden
     async function loadMe() {
@@ -380,12 +393,17 @@
             if (userRole === 'user') {
                 agentBtn.style.display = 'none';
                 helpdeskWrap.style.display = 'none';
+                adminLink.style.display = 'none';
             } else {
-                helpdeskWrap.style.display = '';
+                helpdeskWrap.style.display = 'flex';
                 helpdeskMode = me.helpdesk_mode || false;
                 helpdeskRepo = me.helpdesk_repo || null;
                 updateHelpdeskBtn();
                 if (helpdeskMode) loadHelpdeskRepos();
+                if (userRole === 'admin') {
+                    adminLink.style.display = '';
+                    adminLink.href = basePath + '/admin';
+                }
             }
         } catch(e) {}
     }
