@@ -6,3 +6,4 @@ mistralai==1.5.0
 python-dotenv==1.0.1
 requests==2.32.3
 simple-websocket==1.1.0
+itsdangerous==2.2.0

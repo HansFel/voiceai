@@ -1,56 +1,418 @@
 import os
 import json
-from flask import Flask, render_template, request, jsonify
+import subprocess
+import smtplib
+from email.mime.text import MIMEText
+from datetime import datetime, timedelta
+from functools import wraps
+from flask import Flask, request, jsonify, session, redirect, abort, Response
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO, emit, disconnect
 from dotenv import load_dotenv
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 load_dotenv()
 
 app = Flask(__name__, static_folder='../frontend', template_folder='../frontend')
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(32))
+app.permanent_session_lifetime = timedelta(hours=24)
 
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-MISTRAL_API_KEY = os.environ.get('MISTRAL_API_KEY', '')
+ADMIN_PIN   = os.environ.get('ADMIN_PIN', '1234')
+SMTP_HOST   = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
+SMTP_PORT   = int(os.environ.get('SMTP_PORT', '587'))
+SMTP_USER   = os.environ.get('SMTP_USER', '')
+SMTP_PASS   = os.environ.get('SMTP_PASS', '')
+APP_URL     = os.environ.get('APP_URL', 'https://mgrattenberg.duckdns.org/voiceai')
+REPOS_BASE  = os.environ.get('REPOS_BASE', '/repos')
+USERS_FILE  = os.environ.get('USERS_FILE', '/data/users.json')
+
+serializer = URLSafeTimedSerializer(app.secret_key)
 
 
-def get_claude_response(messages, model='claude-sonnet-4-6'):
-    import anthropic
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    response = client.messages.create(
-        model=model,
-        max_tokens=2048,
-        messages=messages,
-    )
-    return response.content[0].text
+# ── Nutzerverwaltung (JSON-Datei) ─────────────────────────────────────────────
+
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        return {}
+    with open(USERS_FILE, 'r') as f:
+        return json.load(f)
+
+def save_users(users):
+    os.makedirs(os.path.dirname(USERS_FILE), exist_ok=True)
+    with open(USERS_FILE, 'w') as f:
+        json.dump(users, f, indent=2, ensure_ascii=False)
+
+def get_user(email):
+    return load_users().get(email.lower())
+
+def upsert_user(email, **kwargs):
+    users = load_users()
+    email = email.lower()
+    if email not in users:
+        users[email] = {'email': email, 'name': '', 'status': 'eingeladen',
+                        'created': datetime.utcnow().isoformat(), 'last_login': None}
+    users[email].update(kwargs)
+    save_users(users)
+    return users[email]
+
+def delete_user(email):
+    users = load_users()
+    users.pop(email.lower(), None)
+    save_users(users)
 
 
-def get_mistral_response(messages, model='mistral-large-latest'):
-    from mistralai import Mistral
-    client = Mistral(api_key=MISTRAL_API_KEY)
-    response = client.chat.complete(
-        model=model,
-        messages=messages,
-    )
-    return response.choices[0].message.content
+# ── Auth Decorators ───────────────────────────────────────────────────────────
 
+def require_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('authenticated'):
+            if request.is_json:
+                abort(401)
+            return redirect(APP_URL + '/login')
+        email = session.get('email', '')
+        user = get_user(email) if email else None
+        if user and user.get('status') == 'gesperrt':
+            session.clear()
+            return redirect(APP_URL + '/login?err=gesperrt')
+        return f(*args, **kwargs)
+    return decorated
+
+def require_admin(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('admin'):
+            return redirect(APP_URL + '/admin/login')
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ── Email ─────────────────────────────────────────────────────────────────────
+
+def send_invite_email(to_email, name, token):
+    link = f"{APP_URL}/auth?token={token}"
+    greeting = f"Hallo {name}!" if name else "Hallo!"
+    body = f"""{greeting}
+
+Du wurdest zu VoiceAI eingeladen.
+
+Klicke auf den folgenden Link um dich anzumelden (gültig 24 Stunden):
+
+{link}
+"""
+    msg = MIMEText(body, 'plain', 'utf-8')
+    msg['Subject'] = 'VoiceAI Einladung'
+    msg['From'] = SMTP_USER
+    msg['To'] = to_email
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+        smtp.starttls()
+        smtp.login(SMTP_USER, SMTP_PASS)
+        smtp.send_message(msg)
+
+
+# ── Login / Auth Routen ───────────────────────────────────────────────────────
+
+@app.route('/login')
+def login():
+    err = request.args.get('err', '')
+    err_html = f'<p class="err">{"Dein Zugang wurde gesperrt." if err=="gesperrt" else ""}</p>'
+    return f'''<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VoiceAI</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0f0f0f;color:#e0e0e0;font-family:sans-serif;display:flex;
+align-items:center;justify-content:center;height:100dvh}}
+.box{{background:#1a1a1a;border:1px solid #333;border-radius:16px;padding:32px;
+max-width:360px;width:90%;text-align:center}}
+h2{{margin-bottom:8px;font-size:22px}}
+p{{color:#888;font-size:14px;margin-bottom:20px}}
+input{{width:100%;background:#2a2a2a;border:1px solid #444;color:#e0e0e0;
+border-radius:8px;padding:10px 14px;font-size:15px;margin-bottom:12px;outline:none}}
+input:focus{{border-color:#2563eb}}
+button{{width:100%;background:#2563eb;color:white;border:none;border-radius:8px;
+padding:12px;font-size:15px;cursor:pointer}}
+.msg{{margin-top:12px;font-size:13px;color:#4caf50}}
+.err{{color:#f87171;margin-bottom:12px;font-size:13px}}
+</style></head><body>
+<div class="box">
+  <h2>🎤 VoiceAI</h2>
+  <p>Melde dich mit deiner Email an</p>
+  {err_html}
+  <input type="email" id="email" placeholder="Email-Adresse" autofocus>
+  <button onclick="send()">Einladungslink anfordern</button>
+  <div id="msg"></div>
+</div>
+<script>
+async function send() {{
+  const email = document.getElementById('email').value.trim();
+  const msg = document.getElementById('msg');
+  if (!email) return;
+  msg.textContent = 'Wird gesendet...'; msg.className = 'msg';
+  const r = await fetch('invite', {{method:'POST',
+    headers:{{'Content-Type':'application/json'}},
+    body: JSON.stringify({{email}})}});
+  const d = await r.json();
+  if (r.ok) {{ msg.textContent = '✓ Link wurde gesendet! Bitte Email prüfen.'; }}
+  else {{ msg.textContent = '⚠️ ' + (d.error || 'Fehler'); msg.className = 'msg err'; }}
+}}
+document.getElementById('email').addEventListener('keydown', e => {{ if(e.key==='Enter') send(); }});
+</script></body></html>'''
+
+
+@app.route('/invite', methods=['POST'])
+def invite():
+    data = request.get_json() or {}
+    email = data.get('email', '').strip().lower()
+    if not email or '@' not in email:
+        return jsonify({'error': 'Ungültige Email'}), 400
+    user = get_user(email)
+    if not user:
+        return jsonify({'error': 'Diese Email ist nicht zugelassen. Bitte beim Admin anfragen.'}), 403
+    if user.get('status') == 'gesperrt':
+        return jsonify({'error': 'Dein Zugang wurde gesperrt.'}), 403
+    if not SMTP_USER or not SMTP_PASS:
+        return jsonify({'error': 'Email-Versand nicht konfiguriert'}), 500
+    token = serializer.dumps(email, salt='invite')
+    try:
+        send_invite_email(email, user.get('name', ''), token)
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/auth')
+def auth():
+    token = request.args.get('token', '')
+    try:
+        email = serializer.loads(token, salt='invite', max_age=86400)
+        user = get_user(email)
+        if not user or user.get('status') == 'gesperrt':
+            return '<h3>Kein Zugang.</h3>', 403
+        upsert_user(email, status='aktiv', last_login=datetime.utcnow().isoformat())
+        session.permanent = True
+        session['authenticated'] = True
+        session['email'] = email
+        return redirect(APP_URL + '/')
+    except SignatureExpired:
+        return '<h3>Link abgelaufen. Bitte neuen Link anfordern.</h3>', 403
+    except BadSignature:
+        return '<h3>Ungültiger Link.</h3>', 403
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(APP_URL + '/login')
+
+
+# ── Admin Routen ──────────────────────────────────────────────────────────────
+
+@app.route('/admin/login', methods=['GET', 'POST'])
+def admin_login():
+    err = ''
+    if request.method == 'POST':
+        pin = request.form.get('pin', '')
+        if pin == ADMIN_PIN:
+            session['admin'] = True
+            return redirect(APP_URL + '/admin')
+        err = 'Falscher PIN'
+    return f'''<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0f0f0f;color:#e0e0e0;font-family:sans-serif;display:flex;
+align-items:center;justify-content:center;height:100dvh}}
+.box{{background:#1a1a1a;border:1px solid #333;border-radius:16px;padding:32px;
+max-width:320px;width:90%;text-align:center}}
+h2{{margin-bottom:20px}}
+input{{width:100%;background:#2a2a2a;border:1px solid #444;color:#e0e0e0;
+border-radius:8px;padding:10px;font-size:18px;text-align:center;
+margin-bottom:12px;outline:none;letter-spacing:4px}}
+button{{width:100%;background:#7c3aed;color:white;border:none;border-radius:8px;
+padding:12px;font-size:15px;cursor:pointer}}
+.err{{color:#f87171;font-size:13px;margin-bottom:12px}}
+</style></head><body>
+<div class="box">
+  <h2>🔐 Admin</h2>
+  {"<p class='err'>" + err + "</p>" if err else ""}
+  <form method="post">
+    <input type="password" name="pin" placeholder="PIN" autofocus>
+    <button type="submit">Anmelden</button>
+  </form>
+</div></body></html>'''
+
+
+@app.route('/admin')
+@require_admin
+def admin():
+    users = load_users()
+    rows = ''
+    for u in sorted(users.values(), key=lambda x: x.get('created', '')):
+        status = u.get('status', '')
+        status_badge = {
+            'eingeladen': '<span style="color:#fb923c">eingeladen</span>',
+            'aktiv':      '<span style="color:#4ade80">aktiv</span>',
+            'gesperrt':   '<span style="color:#f87171">gesperrt</span>',
+        }.get(status, status)
+        last = u.get('last_login', '')
+        last_str = last[:16].replace('T', ' ') if last else '—'
+        sperr_btn = ''
+        if status != 'gesperrt':
+            sperr_btn = f'<button class="btn-warn" onclick="action(\'{u["email"]}\',\'sperren\')">Sperren</button>'
+        else:
+            sperr_btn = f'<button class="btn-ok" onclick="action(\'{u["email"]}\',\'entsperren\')">Entsperren</button>'
+        rows += f'''<tr>
+          <td>{u.get("name","")}</td>
+          <td>{u["email"]}</td>
+          <td>{status_badge}</td>
+          <td>{last_str}</td>
+          <td style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn-blue" onclick="action('{u["email"]}','einladen')">Einladen</button>
+            {sperr_btn}
+            <button class="btn-red" onclick="action('{u["email"]}','loeschen')">Löschen</button>
+          </td>
+        </tr>'''
+
+    return f'''<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VoiceAI Admin</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0f0f0f;color:#e0e0e0;font-family:sans-serif;padding:24px}}
+h2{{margin-bottom:20px;font-size:20px}}
+.card{{background:#1a1a1a;border:1px solid #333;border-radius:12px;padding:20px;margin-bottom:20px}}
+table{{width:100%;border-collapse:collapse;font-size:14px}}
+th{{text-align:left;padding:8px 10px;color:#888;border-bottom:1px solid #333}}
+td{{padding:8px 10px;border-bottom:1px solid #222;vertical-align:middle}}
+button{{border:none;border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer}}
+.btn-blue{{background:#2563eb;color:white}}
+.btn-warn{{background:#d97706;color:white}}
+.btn-ok{{background:#166534;color:white}}
+.btn-red{{background:#7f1d1d;color:#fca5a5}}
+.add-form{{display:flex;gap:8px;flex-wrap:wrap}}
+.add-form input{{background:#2a2a2a;border:1px solid #444;color:#e0e0e0;
+border-radius:8px;padding:8px 12px;font-size:14px;outline:none;flex:1;min-width:140px}}
+.add-form button{{background:#7c3aed;color:white;padding:8px 16px;font-size:14px}}
+#msg{{margin-top:10px;font-size:13px;color:#4ade80}}
+</style></head><body>
+<h2>🎤 VoiceAI – Nutzerverwaltung</h2>
+
+<div class="card">
+  <h3 style="margin-bottom:14px;font-size:16px">Person hinzufügen</h3>
+  <div class="add-form">
+    <input type="text" id="new-name" placeholder="Name">
+    <input type="email" id="new-email" placeholder="Email">
+    <button onclick="addUser()">Hinzufügen & Einladen</button>
+  </div>
+  <div id="msg"></div>
+</div>
+
+<div class="card">
+  <table>
+    <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Letzter Login</th><th>Aktionen</th></tr></thead>
+    <tbody id="tbody">{rows}</tbody>
+  </table>
+</div>
+
+<script>
+async function addUser() {{
+  const name = document.getElementById('new-name').value.trim();
+  const email = document.getElementById('new-email').value.trim();
+  const msg = document.getElementById('msg');
+  if (!email) return;
+  const r = await fetch('users', {{method:'POST',
+    headers:{{'Content-Type':'application/json'}},
+    body: JSON.stringify({{name, email, invite: true}})}});
+  const d = await r.json();
+  msg.textContent = r.ok ? '✓ ' + d.msg : '⚠️ ' + d.error;
+  if (r.ok) setTimeout(() => location.reload(), 1000);
+}}
+
+async function action(email, act) {{
+  if (act === 'loeschen' && !confirm('Wirklich löschen?')) return;
+  const r = await fetch('users/' + encodeURIComponent(email) + '/' + act, {{method:'POST'}});
+  const d = await r.json();
+  if (r.ok) location.reload();
+  else alert(d.error);
+}}
+</script></body></html>'''
+
+
+@app.route('/admin/users', methods=['POST'])
+@require_admin
+def admin_add_user():
+    data = request.get_json() or {}
+    name = data.get('name', '').strip()
+    email = data.get('email', '').strip().lower()
+    do_invite = data.get('invite', False)
+    if not email or '@' not in email:
+        return jsonify({'error': 'Ungültige Email'}), 400
+    if get_user(email):
+        return jsonify({'error': 'Email bereits vorhanden'}), 400
+    upsert_user(email, name=name, status='eingeladen')
+    msg = f'{name or email} hinzugefügt'
+    if do_invite and SMTP_USER and SMTP_PASS:
+        try:
+            token = serializer.dumps(email, salt='invite')
+            send_invite_email(email, name, token)
+            msg += ' und Einladung gesendet'
+        except Exception as e:
+            msg += f' (Email-Fehler: {e})'
+    return jsonify({'msg': msg})
+
+
+@app.route('/admin/users/<email>/<action>', methods=['POST'])
+@require_admin
+def admin_user_action(email, action):
+    email = email.lower()
+    user = get_user(email)
+    if not user:
+        return jsonify({'error': 'Nicht gefunden'}), 404
+    if action == 'einladen':
+        if not SMTP_USER or not SMTP_PASS:
+            return jsonify({'error': 'Email nicht konfiguriert'}), 500
+        token = serializer.dumps(email, salt='invite')
+        try:
+            send_invite_email(email, user.get('name', ''), token)
+            upsert_user(email, status='eingeladen')
+            return jsonify({'ok': True})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    elif action == 'sperren':
+        upsert_user(email, status='gesperrt')
+        return jsonify({'ok': True})
+    elif action == 'entsperren':
+        upsert_user(email, status='aktiv')
+        return jsonify({'ok': True})
+    elif action == 'loeschen':
+        delete_user(email)
+        return jsonify({'ok': True})
+    return jsonify({'error': 'Unbekannte Aktion'}), 400
+
+
+# ── App Routen ────────────────────────────────────────────────────────────────
 
 @app.route('/')
+@require_auth
 def index():
     return app.send_static_file('index.html')
 
 
 @app.route('/api/models')
+@require_auth
 def models():
     available = []
-    if ANTHROPIC_API_KEY:
+    if os.environ.get('ANTHROPIC_API_KEY'):
         available += [
             {'id': 'claude-sonnet-4-6', 'name': 'Claude Sonnet 4.6', 'provider': 'anthropic'},
             {'id': 'claude-haiku-4-5-20251001', 'name': 'Claude Haiku 4.5', 'provider': 'anthropic'},
         ]
-    if MISTRAL_API_KEY:
+    if os.environ.get('MISTRAL_API_KEY'):
         available += [
             {'id': 'mistral-large-latest', 'name': 'Mistral Large', 'provider': 'mistral'},
             {'id': 'mistral-small-latest', 'name': 'Mistral Small', 'provider': 'mistral'},
@@ -58,29 +420,229 @@ def models():
     return jsonify(available)
 
 
+# ── Agent Tools ───────────────────────────────────────────────────────────────
+
+AGENT_TOOLS = [
+    {
+        "name": "list_repos",
+        "description": "Listet alle verfügbaren Repositories auf.",
+        "input_schema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "read_file",
+        "description": "Liest den Inhalt einer Datei in einem Repository.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository-Name"},
+                "path": {"type": "string", "description": "Dateipfad relativ zum Repo-Root"}
+            },
+            "required": ["repo", "path"]
+        }
+    },
+    {
+        "name": "list_files",
+        "description": "Listet Dateien in einem Verzeichnis eines Repositories.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository-Name"},
+                "path": {"type": "string", "description": "Verzeichnispfad (leer = Root)", "default": ""}
+            },
+            "required": ["repo"]
+        }
+    },
+    {
+        "name": "git_status",
+        "description": "Zeigt den git status eines Repositories.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository-Name"}
+            },
+            "required": ["repo"]
+        }
+    },
+    {
+        "name": "git_log",
+        "description": "Zeigt die letzten Commits eines Repositories.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository-Name"},
+                "n": {"type": "integer", "description": "Anzahl Commits", "default": 10}
+            },
+            "required": ["repo"]
+        }
+    },
+    {
+        "name": "git_diff",
+        "description": "Zeigt Änderungen (diff) in einem Repository.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository-Name"},
+                "path": {"type": "string", "description": "Optionaler Dateipfad", "default": ""}
+            },
+            "required": ["repo"]
+        }
+    },
+]
+
+
+def _safe_repo_path(repo, path=''):
+    base = os.path.realpath(REPOS_BASE)
+    repo_path = os.path.realpath(os.path.join(base, repo))
+    if not repo_path.startswith(base):
+        raise ValueError(f"Ungültiges Repository: {repo}")
+    if path:
+        full = os.path.realpath(os.path.join(repo_path, path))
+        if not full.startswith(repo_path):
+            raise ValueError(f"Ungültiger Pfad: {path}")
+        return full
+    return repo_path
+
+
+def run_tool(name, inputs):
+    try:
+        if name == "list_repos":
+            if not os.path.exists(REPOS_BASE):
+                return f"Repos-Verzeichnis nicht gefunden: {REPOS_BASE}"
+            repos = [d for d in os.listdir(REPOS_BASE)
+                     if os.path.isdir(os.path.join(REPOS_BASE, d)) and not d.startswith('.')]
+            return "Verfügbare Repos:\n" + "\n".join(repos) if repos else "Keine Repos gefunden."
+        elif name == "read_file":
+            path = _safe_repo_path(inputs['repo'], inputs['path'])
+            if not os.path.isfile(path):
+                return f"Datei nicht gefunden: {inputs['path']}"
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+            if len(content) > 8000:
+                content = content[:8000] + "\n... [gekürzt]"
+            return content
+        elif name == "list_files":
+            path = _safe_repo_path(inputs['repo'], inputs.get('path', ''))
+            if not os.path.isdir(path):
+                return f"Verzeichnis nicht gefunden: {inputs.get('path', '')}"
+            items = []
+            for item in sorted(os.listdir(path)):
+                if item.startswith('.'):
+                    continue
+                full = os.path.join(path, item)
+                items.append(("📁 " if os.path.isdir(full) else "📄 ") + item)
+            return "\n".join(items) if items else "Leer."
+        elif name == "git_status":
+            repo_path = _safe_repo_path(inputs['repo'])
+            r = subprocess.run(['git', 'status', '--short'],
+                               cwd=repo_path, capture_output=True, text=True, timeout=10)
+            return r.stdout or "Keine Änderungen."
+        elif name == "git_log":
+            repo_path = _safe_repo_path(inputs['repo'])
+            r = subprocess.run(['git', 'log', f'-{inputs.get("n", 10)}', '--oneline'],
+                               cwd=repo_path, capture_output=True, text=True, timeout=10)
+            return r.stdout or "Keine Commits."
+        elif name == "git_diff":
+            repo_path = _safe_repo_path(inputs['repo'])
+            cmd = ['git', 'diff'] + ([inputs['path']] if inputs.get('path') else [])
+            r = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, timeout=10)
+            output = r.stdout
+            if len(output) > 6000:
+                output = output[:6000] + "\n... [gekürzt]"
+            return output or "Keine Änderungen."
+        return f"Unbekanntes Tool: {name}"
+    except Exception as e:
+        return f"Fehler: {str(e)}"
+
+
+AGENT_SYSTEM = """Du bist ein Entwicklungsassistent mit Zugriff auf Code-Repositories.
+Du kannst Dateien lesen, Git-Status prüfen und Fragen über den Code beantworten.
+Antworte auf Deutsch, kurz und präzise. Bei Sprachsteuerung: keine langen Listen,
+fasse zusammen was wichtig ist."""
+
+
+def run_agent(messages, model='claude-sonnet-4-6'):
+    import anthropic
+    client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY', ''))
+    while True:
+        response = client.messages.create(
+            model=model, max_tokens=4096,
+            system=AGENT_SYSTEM, tools=AGENT_TOOLS, messages=messages,
+        )
+        if response.stop_reason == 'end_turn':
+            for block in response.content:
+                if hasattr(block, 'text'):
+                    return block.text
+            return "Keine Antwort."
+        elif response.stop_reason == 'tool_use':
+            tool_results = []
+            for block in response.content:
+                if block.type == 'tool_use':
+                    result = run_tool(block.name, block.input)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result
+                    })
+            messages = messages + [
+                {"role": "assistant", "content": response.content},
+                {"role": "user", "content": tool_results}
+            ]
+        else:
+            return "Unerwarteter Stop-Grund: " + response.stop_reason
+
+
+# ── Socket.IO ─────────────────────────────────────────────────────────────────
+
+@socketio.on('connect')
+def on_connect():
+    if not session.get('authenticated'):
+        disconnect()
+        return False
+
+
 @socketio.on('chat')
 def handle_chat(data):
     messages = data.get('messages', [])
     model_id = data.get('model', 'claude-sonnet-4-6')
     provider = data.get('provider', 'anthropic')
-
+    ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+    MISTRAL_API_KEY = os.environ.get('MISTRAL_API_KEY', '')
     try:
         if provider == 'anthropic':
             if not ANTHROPIC_API_KEY:
                 emit('error', {'message': 'Anthropic API-Key nicht konfiguriert'})
                 return
-            text = get_claude_response(messages, model_id)
+            import anthropic
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            response = client.messages.create(model=model_id, max_tokens=2048, messages=messages)
+            text = response.content[0].text
         elif provider == 'mistral':
             if not MISTRAL_API_KEY:
                 emit('error', {'message': 'Mistral API-Key nicht konfiguriert'})
                 return
-            text = get_mistral_response(messages, model_id)
+            from mistralai import Mistral
+            client = Mistral(api_key=MISTRAL_API_KEY)
+            response = client.chat.complete(model=model_id, messages=messages)
+            text = response.choices[0].message.content
         else:
             emit('error', {'message': f'Unbekannter Provider: {provider}'})
             return
-
         emit('response', {'text': text, 'model': model_id})
+    except Exception as e:
+        emit('error', {'message': str(e)})
 
+
+@socketio.on('agent')
+def handle_agent(data):
+    messages = data.get('messages', [])
+    model_id = data.get('model', 'claude-sonnet-4-6')
+    if not os.environ.get('ANTHROPIC_API_KEY'):
+        emit('error', {'message': 'Agent benötigt Anthropic API-Key'})
+        return
+    try:
+        emit('agent_status', {'text': '🔍 Agent denkt...'})
+        text = run_agent(messages, model_id)
+        emit('response', {'text': text, 'model': model_id + ' (Agent)'})
     except Exception as e:
         emit('error', {'message': str(e)})
 

@@ -204,6 +204,33 @@
             color: #888;
             min-height: 16px;
         }
+
+        #agent-btn {
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            font-size: 13px;
+            padding: 4px 10px;
+            cursor: pointer;
+            height: auto;
+            width: auto;
+            border-radius: 6px;
+        }
+
+        #agent-btn.active {
+            background: #7c3aed;
+            border-color: #7c3aed;
+            color: white;
+        }
+
+        .msg.agent-status {
+            background: #1a1a2e;
+            border: 1px solid #7c3aed33;
+            color: #a78bfa;
+            align-self: center;
+            font-size: 12px;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -227,6 +254,7 @@
     <div id="controls-row">
         <span id="speech-status"></span>
         <div style="display:flex;gap:6px;align-items:center">
+            <button id="agent-btn" title="Agent-Modus (Repo-Zugriff)">🤖 Agent</button>
             <button class="btn" id="tts-btn" title="Vorlesen ein/aus">🔊</button>
             <button id="clear-btn">Chat leeren</button>
         </div>
@@ -238,7 +266,7 @@
     </div>
 </footer>
 
-<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js" crossorigin="anonymous"></script>
 <script>
     // basePath: alles vor dem letzten Segment (z.B. '/voiceai' wenn URL='/voiceai/')
     const pathSegments = window.location.pathname.replace(/\/$/, '').split('/').filter(p => p);
@@ -260,6 +288,9 @@
     let ttsEnabled = true;
     let recognition = null;
     let isRecording = false;
+    let autoListen = false;
+    let agentMode = false;
+    const agentBtn = document.getElementById('agent-btn');
 
     // Socket.IO
     socket.on('connect', () => {
@@ -271,12 +302,34 @@
         statusDot.className = '';
     });
 
+    socket.on('agent_status', (data) => {
+        const div = document.createElement('div');
+        div.className = 'msg agent-status';
+        div.id = 'agent-status-msg';
+        div.textContent = data.text;
+        const old = document.getElementById('agent-status-msg');
+        if (old) old.remove();
+        chat.appendChild(div);
+        chat.scrollTop = chat.scrollHeight;
+    });
+
     socket.on('response', (data) => {
         statusDot.className = 'connected';
+        const old = document.getElementById('agent-status-msg');
+        if (old) old.remove();
         addMessage('ai', data.text, data.model);
         messages.push({ role: 'assistant', content: data.text });
-        if (ttsEnabled) speak(data.text);
         sendBtn.disabled = false;
+        if (ttsEnabled) {
+            speak(data.text, () => {
+                // Nach dem Vorlesen automatisch wieder zuhören wenn Mic aktiv war
+                if (recognition && autoListen) {
+                    recognition.start();
+                }
+            });
+        } else if (recognition && autoListen) {
+            recognition.start();
+        }
     });
 
     socket.on('error', (data) => {
@@ -325,7 +378,11 @@
         statusDot.className = 'thinking';
         sendBtn.disabled = true;
 
-        socket.emit('chat', { messages, model, provider });
+        if (agentMode) {
+            socket.emit('agent', { messages, model });
+        } else {
+            socket.emit('chat', { messages, model, provider });
+        }
         textInput.value = '';
         textInput.style.height = 'auto';
     }
@@ -351,6 +408,14 @@
     });
 
     // TTS
+    agentBtn.addEventListener('click', () => {
+        agentMode = !agentMode;
+        agentBtn.className = agentMode ? 'active' : '';
+        if (agentMode) {
+            addMessage('ai', '🤖 Agent-Modus aktiv. Ich habe Zugriff auf die Repositories und kann Code lesen, Git-Status prüfen und Fragen über den Code beantworten.');
+        }
+    });
+
     ttsBtn.addEventListener('click', () => {
         ttsEnabled = !ttsEnabled;
         ttsBtn.className = 'btn' + (ttsEnabled ? ' active' : '');
@@ -358,12 +423,13 @@
     });
     ttsBtn.className = 'btn active';
 
-    function speak(text) {
+    function speak(text, onEnd) {
         speechSynthesis.cancel();
         const clean = text.replace(/```[\s\S]*?```/g, 'Code-Block').replace(/[*_`#]/g, '');
         const utt = new SpeechSynthesisUtterance(clean.substring(0, 500));
         utt.lang = 'de-DE';
         utt.rate = 1.1;
+        if (onEnd) utt.onend = onEnd;
         speechSynthesis.speak(utt);
     }
 
@@ -386,7 +452,8 @@
                 .map(r => r[0].transcript).join('');
             textInput.value = transcript;
             if (e.results[e.results.length - 1].isFinal) {
-                speechStatus.textContent = '✓ Erkannt';
+                speechStatus.textContent = '✓ Erkannt – sende...';
+                setTimeout(() => sendMessage(textInput.value), 300);
             }
         };
 
@@ -398,14 +465,26 @@
 
         recognition.onerror = (e) => {
             isRecording = false;
-            micBtn.className = 'btn';
-            speechStatus.textContent = '⚠️ ' + e.error;
+            micBtn.className = 'btn recording';
+            if (e.error === 'network') {
+                speechStatus.textContent = '↻ Verbindung...';
+                if (autoListen) setTimeout(() => { try { recognition.start(); } catch(ex) {} }, 1500);
+            } else if (e.error === 'no-speech') {
+                speechStatus.textContent = '🎤 Warte...';
+                if (autoListen) setTimeout(() => { try { recognition.start(); } catch(ex) {} }, 500);
+            } else {
+                micBtn.className = 'btn';
+                autoListen = false;
+                speechStatus.textContent = '⚠️ ' + e.error;
+            }
         };
 
         micBtn.addEventListener('click', () => {
             if (isRecording) {
+                autoListen = false;
                 recognition.stop();
             } else {
+                autoListen = true;
                 recognition.start();
             }
         });
