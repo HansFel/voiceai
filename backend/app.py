@@ -2,6 +2,8 @@ import os
 import json
 import subprocess
 import smtplib
+import hashlib
+import secrets
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from functools import wraps
@@ -115,13 +117,25 @@ Klicke auf den folgenden Link um dich anzumelden (gültig 24 Stunden):
         smtp.send_message(msg)
 
 
+# ── Passwort-Hilfsfunktionen ──────────────────────────────────────────────────
+
+def hash_password(password, salt=None):
+    if salt is None:
+        salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 260000)
+    return salt + ':' + h.hex()
+
+def verify_password(password, stored):
+    try:
+        salt, _ = stored.split(':', 1)
+        return hash_password(password, salt) == stored
+    except Exception:
+        return False
+
+
 # ── Login / Auth Routen ───────────────────────────────────────────────────────
 
-@app.route('/login')
-def login():
-    err = request.args.get('err', '')
-    err_html = f'<p class="err">{"Dein Zugang wurde gesperrt." if err=="gesperrt" else ""}</p>'
-    return f'''<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8">
+LOGIN_HTML = '''<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>VoiceAI</title>
 <style>
@@ -136,75 +150,146 @@ input{{width:100%;background:#2a2a2a;border:1px solid #444;color:#e0e0e0;
 border-radius:8px;padding:10px 14px;font-size:15px;margin-bottom:12px;outline:none}}
 input:focus{{border-color:#2563eb}}
 button{{width:100%;background:#2563eb;color:white;border:none;border-radius:8px;
-padding:12px;font-size:15px;cursor:pointer}}
+padding:12px;font-size:15px;cursor:pointer;margin-bottom:8px}}
 .msg{{margin-top:12px;font-size:13px;color:#4caf50}}
-.err{{color:#f87171;margin-bottom:12px;font-size:13px}}
+.err{{color:#f87171;font-size:13px;margin-bottom:12px}}
+#pw-row{{display:none}}
 </style></head><body>
 <div class="box">
   <h2>🎤 VoiceAI</h2>
-  <p>Melde dich mit deiner Email an</p>
-  {err_html}
+  <p id="subtitle">Email eingeben</p>
+  <div id="err" class="err"></div>
   <input type="email" id="email" placeholder="Email-Adresse" autofocus>
-  <button onclick="send()">Einladungslink anfordern</button>
-  <div id="msg"></div>
+  <div id="pw-row">
+    <input type="password" id="password" placeholder="Passwort">
+    <button onclick="doLogin()">Anmelden</button>
+  </div>
+  <div id="nopw-row">
+    <button onclick="checkEmail()">Weiter</button>
+  </div>
 </div>
 <script>
-async function send() {{
+const base = window.location.pathname.replace(/\\/login$/, '');
+let step = 'email';
+
+document.getElementById('email').addEventListener('keydown', e => {{
+  if (e.key === 'Enter') checkEmail();
+}});
+document.getElementById('password').addEventListener('keydown', e => {{
+  if (e.key === 'Enter') doLogin();
+}});
+
+async function checkEmail() {{
   const email = document.getElementById('email').value.trim();
-  const msg = document.getElementById('msg');
+  const err = document.getElementById('err');
   if (!email) return;
-  msg.textContent = 'Wird gesendet...'; msg.className = 'msg';
-  const r = await fetch('invite', {{method:'POST',
-    headers:{{'Content-Type':'application/json'}},
-    body: JSON.stringify({{email}})}});
+  const r = await fetch(base + '/api/check-email', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{email}})
+  }});
   const d = await r.json();
-  if (r.ok) {{ msg.textContent = '✓ Link wurde gesendet! Bitte Email prüfen.'; }}
-  else {{ msg.textContent = '⚠️ ' + (d.error || 'Fehler'); msg.className = 'msg err'; }}
+  if (!r.ok) {{
+    err.textContent = d.error || 'Kein Zugang.';
+    return;
+  }}
+  err.textContent = '';
+  document.getElementById('email').readOnly = true;
+  document.getElementById('nopw-row').style.display = 'none';
+  document.getElementById('pw-row').style.display = 'block';
+  if (d.need_set) {{
+    document.getElementById('subtitle').textContent = 'Passwort festlegen';
+    document.getElementById('password').placeholder = 'Neues Passwort wählen';
+  }} else {{
+    document.getElementById('subtitle').textContent = 'Passwort eingeben';
+    document.getElementById('password').focus();
+  }}
+  step = d.need_set ? 'set' : 'login';
 }}
-document.getElementById('email').addEventListener('keydown', e => {{ if(e.key==='Enter') send(); }});
+
+async function doLogin() {{
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  const err = document.getElementById('err');
+  if (!password) return;
+  const url = step === 'set' ? base + '/api/set-password' : base + '/api/login';
+  const r = await fetch(url, {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{email, password}})
+  }});
+  const d = await r.json();
+  if (!r.ok) {{
+    err.textContent = d.error || 'Fehler';
+    return;
+  }}
+  window.location.href = d.redirect || base + '/';
+}}
 </script></body></html>'''
 
 
-@app.route('/invite', methods=['POST'])
-def invite():
+@app.route('/login')
+def login():
+    return LOGIN_HTML
+
+
+@app.route('/api/check-email', methods=['POST'])
+def check_email():
     data = request.get_json() or {}
     email = data.get('email', '').strip().lower()
     if not email or '@' not in email:
         return jsonify({'error': 'Ungültige Email'}), 400
     user = get_user(email)
     if not user:
-        return jsonify({'error': 'Diese Email ist nicht zugelassen. Bitte beim Admin anfragen.'}), 403
+        return jsonify({'error': 'Kein Zugang. Bitte beim Administrator anfragen.'}), 403
     if user.get('status') == 'gesperrt':
         return jsonify({'error': 'Dein Zugang wurde gesperrt.'}), 403
-    if not SMTP_USER or not SMTP_PASS:
-        return jsonify({'error': 'Email-Versand nicht konfiguriert'}), 500
-    token = serializer.dumps(email, salt='invite')
-    try:
-        send_invite_email(email, user.get('name', ''), token)
-        return jsonify({'ok': True})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    need_set = not user.get('password_hash')
+    return jsonify({'ok': True, 'need_set': need_set})
 
 
-@app.route('/auth')
-def auth():
-    token = request.args.get('token', '')
-    try:
-        email = serializer.loads(token, salt='invite', max_age=86400)
-        user = get_user(email)
-        if not user or user.get('status') == 'gesperrt':
-            return '<h3>Kein Zugang.</h3>', 403
-        upsert_user(email, status='aktiv', last_login=datetime.utcnow().isoformat())
-        session.permanent = True
-        session['authenticated'] = True
-        session['email'] = email
-        session['role'] = get_user(email).get('role', 'user')
-        session['repos'] = get_user(email).get('repos', [])
-        return redirect(APP_URL + '/')
-    except SignatureExpired:
-        return '<h3>Link abgelaufen. Bitte neuen Link anfordern.</h3>', 403
-    except BadSignature:
-        return '<h3>Ungültiger Link.</h3>', 403
+@app.route('/api/set-password', methods=['POST'])
+def set_password():
+    data = request.get_json() or {}
+    email = data.get('email', '').strip().lower()
+    password = data.get('password', '')
+    user = get_user(email)
+    if not user or user.get('status') == 'gesperrt':
+        return jsonify({'error': 'Kein Zugang'}), 403
+    if user.get('password_hash'):
+        return jsonify({'error': 'Passwort bereits gesetzt'}), 400
+    if len(password) < 6:
+        return jsonify({'error': 'Passwort muss mindestens 6 Zeichen haben'}), 400
+    upsert_user(email, password_hash=hash_password(password),
+                status='aktiv', last_login=datetime.utcnow().isoformat())
+    _do_login_session(email)
+    return jsonify({'ok': True, 'redirect': APP_URL + '/'})
+
+
+@app.route('/api/login', methods=['POST'])
+def do_login():
+    data = request.get_json() or {}
+    email = data.get('email', '').strip().lower()
+    password = data.get('password', '')
+    user = get_user(email)
+    if not user or user.get('status') == 'gesperrt':
+        return jsonify({'error': 'Kein Zugang'}), 403
+    if not user.get('password_hash'):
+        return jsonify({'error': 'Noch kein Passwort gesetzt'}), 400
+    if not verify_password(password, user['password_hash']):
+        return jsonify({'error': 'Falsches Passwort'}), 401
+    upsert_user(email, status='aktiv', last_login=datetime.utcnow().isoformat())
+    _do_login_session(email)
+    return jsonify({'ok': True, 'redirect': APP_URL + '/'})
+
+
+def _do_login_session(email):
+    user = get_user(email)
+    session.permanent = True
+    session['authenticated'] = True
+    session['email'] = email
+    session['role'] = user.get('role', 'user')
+    session['repos'] = user.get('repos', [])
 
 
 @app.route('/logout')
@@ -283,7 +368,7 @@ def admin():
           <td style="font-size:12px;color:#888">{repos_str}</td>
           <td>{last_str}</td>
           <td style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn-blue" onclick="action('{u["email"]}','einladen')">Einladen</button>
+            <button class="btn-blue" onclick="action('{u["email"]}','pw_reset')">PW Reset</button>
             <button class="btn-purple" onclick="editRole('{u["email"]}','{role}','{",".join(u.get("repos",[]))}')">Rolle</button>
             {sperr_btn}
             <button class="btn-red" onclick="action('{u["email"]}','loeschen')">Löschen</button>
@@ -447,16 +532,10 @@ def admin_user_action(email, action):
     user = get_user(email)
     if not user:
         return jsonify({'error': 'Nicht gefunden'}), 404
-    if action == 'einladen':
-        if not SMTP_USER or not SMTP_PASS:
-            return jsonify({'error': 'Email nicht konfiguriert'}), 500
-        token = serializer.dumps(email, salt='invite')
-        try:
-            send_invite_email(email, user.get('name', ''), token)
-            upsert_user(email, status='eingeladen')
-            return jsonify({'ok': True})
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
+    if action == 'pw_reset':
+        # Passwort-Hash löschen → User muss beim nächsten Login neues Passwort setzen
+        upsert_user(email, password_hash=None)
+        return jsonify({'ok': True, 'msg': f'Passwort für {email} zurückgesetzt. User muss beim nächsten Login ein neues Passwort setzen.'})
     elif action == 'sperren':
         upsert_user(email, status='gesperrt')
         return jsonify({'ok': True})
