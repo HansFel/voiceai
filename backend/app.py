@@ -451,10 +451,17 @@ async function addUser() {{
 async function action(email, act) {{
   if (act === 'loeschen' && !confirm('Wirklich löschen?')) return;
   const base = window.location.pathname.replace(/[/]admin.*$/, '');
-  const r = await fetch(base + '/admin/users/' + encodeURIComponent(email) + '/' + act, {{method:'POST'}});
+  const r = await fetch(base + '/admin/users/' + encodeURIComponent(email) + '/' + act, {{method:'POST', headers:{{'Content-Type':'application/json'}}}});
   const d = await r.json();
-  if (r.ok) location.reload();
-  else alert(d.error);
+  const msg = document.getElementById('msg');
+  if (r.ok) {{
+    msg.textContent = '✓ ' + (d.msg || 'Erledigt');
+    msg.style.color = '#4ade80';
+    setTimeout(() => location.reload(), 2500);
+  }} else {{
+    msg.textContent = '⚠️ ' + (d.error || 'Fehler');
+    msg.style.color = '#f87171';
+  }}
 }}
 
 function editRole(email, currentRole, currentRepos) {{
