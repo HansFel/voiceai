@@ -668,9 +668,7 @@ Bei Sprachausgabe: Fasse zuerst kurz zusammen was zu tun ist (1-2 Sätze),
 dann folgt der Code-Block. Keine langen Erklärungen vor dem Code.
 Antworte immer auf Deutsch.""",
 
-    'user': """Du bist ein freundlicher Helpdesk-Assistent für MGRSoftware und Agrargemeinschaft-Software.
-Du hilfst Anwendern bei Fragen zur Bedienung der Software. Erkläre Schritt für Schritt.
-Antworte auf Deutsch, verständlich und ohne technischen Jargon.""",
+    'user': None,  # wird dynamisch aus Docs geladen
 }
 
 
@@ -750,8 +748,35 @@ def run_agent_mistral(messages, model, system, allowed_repos):
             return msg.content or "Keine Antwort."
 
 
+DOCS_BASE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'docs')
+
+def load_docs():
+    """Lädt alle Markdown-Dateien aus dem docs/ Ordner."""
+    docs = []
+    if os.path.exists(DOCS_BASE):
+        for f in sorted(os.listdir(DOCS_BASE)):
+            if f.endswith('.md'):
+                try:
+                    with open(os.path.join(DOCS_BASE, f), 'r', encoding='utf-8') as fh:
+                        docs.append(fh.read())
+                except Exception:
+                    pass
+    return '\n\n---\n\n'.join(docs)
+
+def build_user_system():
+    docs = load_docs()
+    base = """Du bist ein freundlicher Helpdesk-Assistent für die Agrargemeinschaft-Software.
+Du hilfst Anwendern bei Fragen zur Bedienung. Erkläre Schritt für Schritt.
+Antworte auf Deutsch, verständlich und ohne technischen Jargon.
+Beziehe dich auf die folgende Dokumentation:\n\n"""
+    return base + docs if docs else base + "(Keine Dokumentation vorhanden)"
+
+
 def run_agent(messages, model='claude-sonnet-4-6', provider='anthropic', role='developer', allowed_repos=None):
-    system = AGENT_SYSTEMS.get(role, AGENT_SYSTEMS['developer'])
+    if role == 'user':
+        system = build_user_system()
+    else:
+        system = AGENT_SYSTEMS.get(role, AGENT_SYSTEMS['developer'])
     if provider == 'mistral':
         return run_agent_mistral(messages, model, system, allowed_repos)
     else:
