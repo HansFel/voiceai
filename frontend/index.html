@@ -660,12 +660,24 @@
 
     function speak(text, onEnd) {
         speechSynthesis.cancel();
-        const clean = text.replace(/```[\s\S]*?```/g, 'Code-Block').replace(/[*_`#]/g, '');
-        const utt = new SpeechSynthesisUtterance(clean.substring(0, 500));
-        utt.lang = 'de-DE';
-        utt.rate = 1.1;
-        if (onEnd) utt.onend = onEnd;
-        speechSynthesis.speak(utt);
+        const clean = text
+            .replace(/```[\s\S]*?```/g, 'Code-Block')
+            .replace(/[*_`#|]/g, '')
+            .replace(/\n+/g, ' ')
+            .trim();
+        // In Sätze aufteilen (Browser bricht bei langen Utterances ab)
+        const sentences = clean.match(/[^.!?]+[.!?]+/g) || [clean];
+        let i = 0;
+        function next() {
+            if (i >= sentences.length) { if (onEnd) onEnd(); return; }
+            const utt = new SpeechSynthesisUtterance(sentences[i++].trim());
+            utt.lang = 'de-DE';
+            utt.rate = 1.1;
+            utt.onend = next;
+            utt.onerror = next; // bei Fehler trotzdem weitermachen
+            speechSynthesis.speak(utt);
+        }
+        next();
     }
 
     // STT
