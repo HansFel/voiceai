@@ -139,24 +139,23 @@ LOGIN_HTML = '''<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>VoiceAI</title>
 <style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:#0f0f0f;color:#e0e0e0;font-family:sans-serif;display:flex;
-align-items:center;justify-content:center;height:100dvh}}
-.box{{background:#1a1a1a;border:1px solid #333;border-radius:16px;padding:32px;
-max-width:360px;width:90%;text-align:center}}
-h2{{margin-bottom:8px;font-size:22px}}
-p{{color:#888;font-size:14px;margin-bottom:20px}}
-input{{width:100%;background:#2a2a2a;border:1px solid #444;color:#e0e0e0;
-border-radius:8px;padding:10px 14px;font-size:15px;margin-bottom:12px;outline:none}}
-input:focus{{border-color:#2563eb}}
-button{{width:100%;background:#2563eb;color:white;border:none;border-radius:8px;
-padding:12px;font-size:15px;cursor:pointer;margin-bottom:8px}}
-.msg{{margin-top:12px;font-size:13px;color:#4caf50}}
-.err{{color:#f87171;font-size:13px;margin-bottom:12px}}
-#pw-row{{display:none}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0f0f0f;color:#e0e0e0;font-family:sans-serif;display:flex;
+align-items:center;justify-content:center;height:100dvh}
+.box{background:#1a1a1a;border:1px solid #333;border-radius:16px;padding:32px;
+max-width:360px;width:90%;text-align:center}
+h2{margin-bottom:8px;font-size:22px}
+p{color:#888;font-size:14px;margin-bottom:20px}
+input{width:100%;background:#2a2a2a;border:1px solid #444;color:#e0e0e0;
+border-radius:8px;padding:10px 14px;font-size:15px;margin-bottom:12px;outline:none}
+input:focus{border-color:#2563eb}
+button{width:100%;background:#2563eb;color:white;border:none;border-radius:8px;
+padding:12px;font-size:15px;cursor:pointer;margin-bottom:8px}
+.err{color:#f87171;font-size:13px;margin-bottom:12px}
+#pw-row{display:none}
 </style></head><body>
 <div class="box">
-  <h2>🎤 VoiceAI</h2>
+  <h2>&#127908; VoiceAI</h2>
   <p id="subtitle">Email eingeben</p>
   <div id="err" class="err"></div>
   <input type="email" id="email" placeholder="Email-Adresse" autofocus>
@@ -169,62 +168,43 @@ padding:12px;font-size:15px;cursor:pointer;margin-bottom:8px}}
   </div>
 </div>
 <script>
-const base = window.location.pathname.replace(/\\/login$/, '');
+const base = window.location.pathname.replace(/\/login$/, '');
 let step = 'email';
-
-document.getElementById('email').addEventListener('keydown', e => {{
-  if (e.key === 'Enter') checkEmail();
-}});
-document.getElementById('password').addEventListener('keydown', e => {{
-  if (e.key === 'Enter') doLogin();
-}});
-
-async function checkEmail() {{
+document.getElementById('email').addEventListener('keydown', e => { if(e.key==='Enter') checkEmail(); });
+document.getElementById('password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+async function checkEmail() {
   const email = document.getElementById('email').value.trim();
   const err = document.getElementById('err');
   if (!email) return;
-  const r = await fetch(base + '/api/check-email', {{
-    method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{email}})
-  }});
+  const r = await fetch(base + '/api/check-email', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({email})});
   const d = await r.json();
-  if (!r.ok) {{
-    err.textContent = d.error || 'Kein Zugang.';
-    return;
-  }}
+  if (!r.ok) { err.textContent = d.error || 'Kein Zugang.'; return; }
   err.textContent = '';
   document.getElementById('email').readOnly = true;
   document.getElementById('nopw-row').style.display = 'none';
   document.getElementById('pw-row').style.display = 'block';
-  if (d.need_set) {{
+  if (d.need_set) {
     document.getElementById('subtitle').textContent = 'Passwort festlegen';
-    document.getElementById('password').placeholder = 'Neues Passwort wählen';
-  }} else {{
+    document.getElementById('password').placeholder = 'Neues Passwort wählen (mind. 6 Zeichen)';
+  } else {
     document.getElementById('subtitle').textContent = 'Passwort eingeben';
     document.getElementById('password').focus();
-  }}
+  }
   step = d.need_set ? 'set' : 'login';
-}}
-
-async function doLogin() {{
+}
+async function doLogin() {
   const email = document.getElementById('email').value.trim();
   const password = document.getElementById('password').value;
   const err = document.getElementById('err');
   if (!password) return;
   const url = step === 'set' ? base + '/api/set-password' : base + '/api/login';
-  const r = await fetch(url, {{
-    method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{email, password}})
-  }});
+  const r = await fetch(url, {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({email, password})});
   const d = await r.json();
-  if (!r.ok) {{
-    err.textContent = d.error || 'Fehler';
-    return;
-  }}
+  if (!r.ok) { err.textContent = d.error || 'Fehler'; return; }
   window.location.href = d.redirect || base + '/';
-}}
+}
 </script></body></html>'''
 
 
