@@ -277,15 +277,17 @@
         }
 
         #helpdesk-dropdown {
-            position: fixed;
-            bottom: 80px;
-            right: 12px;
-            left: 12px;
+            position: absolute;
+            bottom: calc(100% + 6px);
+            right: 0;
             background: #1e1e1e;
             border: 1px solid #444;
             border-radius: 8px;
+            min-width: 220px;
+            max-width: 90vw;
+            max-height: 60vh;
+            overflow-y: auto;
             z-index: 200;
-            overflow: hidden;
             display: none;
             box-shadow: 0 4px 20px #000a;
         }
