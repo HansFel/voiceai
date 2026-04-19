@@ -96,6 +96,37 @@
             font-size: 13px;
         }
 
+        .msg.ai pre {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 12px;
+            overflow-x: auto;
+            font-size: 13px;
+            margin: 8px 0;
+            position: relative;
+        }
+
+        .msg.ai code {
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            background: #2a2a2a;
+            color: #aaa;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        .copy-btn:hover { background: #3a3a3a; color: #fff; }
+
         .msg-label {
             font-size: 11px;
             opacity: 0.5;
@@ -364,6 +395,41 @@
         }
     }
 
+    // Markdown Code-Blöcke rendern
+    function renderText(text) {
+        const parts = text.split(/(```[\s\S]*?```)/g);
+        const frag = document.createDocumentFragment();
+        parts.forEach(part => {
+            if (part.startsWith('```')) {
+                const lines = part.slice(3, -3).split('\n');
+                const lang = lines[0].trim();
+                const code = lines.slice(lang ? 1 : 0).join('\n');
+                const pre = document.createElement('pre');
+                const codeEl = document.createElement('code');
+                codeEl.textContent = code;
+                pre.appendChild(codeEl);
+                // Kopieren-Button
+                const btn = document.createElement('button');
+                btn.className = 'copy-btn';
+                btn.textContent = 'Kopieren';
+                btn.onclick = () => {
+                    navigator.clipboard.writeText(code);
+                    btn.textContent = '✓';
+                    setTimeout(() => btn.textContent = 'Kopieren', 2000);
+                };
+                pre.appendChild(btn);
+                frag.appendChild(pre);
+            } else {
+                // Normaler Text — Zeilenumbrüche erhalten
+                const span = document.createElement('span');
+                span.style.whiteSpace = 'pre-wrap';
+                span.textContent = part;
+                frag.appendChild(span);
+            }
+        });
+        return frag;
+    }
+
     // Chat
     function addMessage(role, text, model) {
         const div = document.createElement('div');
@@ -373,9 +439,10 @@
             label.className = 'msg-label';
             label.textContent = model || 'AI';
             div.appendChild(label);
+            div.appendChild(renderText(text));
+        } else {
+            div.appendChild(document.createTextNode(text));
         }
-        const content = document.createTextNode(text);
-        div.appendChild(content);
         chat.appendChild(div);
         chat.scrollTop = chat.scrollHeight;
     }
