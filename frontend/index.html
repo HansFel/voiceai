@@ -393,7 +393,7 @@
         sendBtn.disabled = true;
 
         if (agentMode) {
-            socket.emit('agent', { messages, model });
+            socket.emit('agent', { messages, model, provider });
         } else {
             socket.emit('chat', { messages, model, provider });
         }

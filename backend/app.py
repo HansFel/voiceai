@@ -661,10 +661,9 @@ Antworte auf Deutsch, verständlich und ohne technischen Jargon.""",
 }
 
 
-def run_agent(messages, model='claude-sonnet-4-6', role='developer', allowed_repos=None):
+def run_agent_anthropic(messages, model, system, allowed_repos):
     import anthropic
     client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY', ''))
-    system = AGENT_SYSTEMS.get(role, AGENT_SYSTEMS['developer'])
     while True:
         response = client.messages.create(
             model=model, max_tokens=4096,
@@ -691,6 +690,59 @@ def run_agent(messages, model='claude-sonnet-4-6', role='developer', allowed_rep
             ]
         else:
             return "Unerwarteter Stop-Grund: " + response.stop_reason
+
+
+# Mistral Tool-Format konvertieren
+MISTRAL_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t["input_schema"]
+        }
+    } for t in AGENT_TOOLS
+]
+
+
+def run_agent_mistral(messages, model, system, allowed_repos):
+    import json as _json
+    from mistralai import Mistral
+    client = Mistral(api_key=os.environ.get('MISTRAL_API_KEY', ''))
+    # System-Prompt als erstes Message
+    mistral_messages = [{"role": "system", "content": system}] + messages
+    while True:
+        response = client.chat.complete(
+            model=model,
+            messages=mistral_messages,
+            tools=MISTRAL_TOOLS,
+            tool_choice="auto",
+        )
+        msg = response.choices[0].message
+        finish = response.choices[0].finish_reason
+        if finish == 'tool_calls' and msg.tool_calls:
+            mistral_messages.append({"role": "assistant", "content": msg.content or "", "tool_calls": msg.tool_calls})
+            for tc in msg.tool_calls:
+                try:
+                    inputs = _json.loads(tc.function.arguments)
+                except Exception:
+                    inputs = {}
+                result = run_tool(tc.function.name, inputs, allowed_repos=allowed_repos)
+                mistral_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result
+                })
+        else:
+            return msg.content or "Keine Antwort."
+
+
+def run_agent(messages, model='claude-sonnet-4-6', provider='anthropic', role='developer', allowed_repos=None):
+    system = AGENT_SYSTEMS.get(role, AGENT_SYSTEMS['developer'])
+    if provider == 'mistral':
+        return run_agent_mistral(messages, model, system, allowed_repos)
+    else:
+        return run_agent_anthropic(messages, model, system, allowed_repos)
 
 
 # ── Socket.IO ─────────────────────────────────────────────────────────────────
@@ -738,16 +790,20 @@ def handle_chat(data):
 def handle_agent(data):
     messages = data.get('messages', [])
     model_id = data.get('model', 'claude-sonnet-4-6')
+    provider = data.get('provider', 'anthropic')
     role = session.get('role', 'user')
-    allowed_repos = session.get('repos', []) or None  # None = alle erlaubt für developer
+    allowed_repos = session.get('repos', []) or None
     if role == 'user':
-        allowed_repos = []  # user hat keinen Repo-Zugriff
-    if not os.environ.get('ANTHROPIC_API_KEY'):
+        allowed_repos = []
+    if provider == 'anthropic' and not os.environ.get('ANTHROPIC_API_KEY'):
         emit('error', {'message': 'Agent benötigt Anthropic API-Key'})
+        return
+    if provider == 'mistral' and not os.environ.get('MISTRAL_API_KEY'):
+        emit('error', {'message': 'Mistral API-Key nicht konfiguriert'})
         return
     try:
         emit('agent_status', {'text': '🔍 Agent denkt...'})
-        text = run_agent(messages, model_id, role=role, allowed_repos=allowed_repos)
+        text = run_agent(messages, model_id, provider=provider, role=role, allowed_repos=allowed_repos)
         emit('response', {'text': text, 'model': model_id + ' (Agent)'})
     except Exception as e:
         emit('error', {'message': str(e)})
