@@ -582,10 +582,20 @@
         const div = document.createElement('div');
         div.className = 'msg ' + role;
         if (role === 'ai') {
+            const labelRow = document.createElement('div');
+            labelRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:4px';
             const label = document.createElement('div');
             label.className = 'msg-label';
+            label.style.margin = '0';
             label.textContent = model || 'AI';
-            div.appendChild(label);
+            const speakBtn = document.createElement('button');
+            speakBtn.textContent = '🔊';
+            speakBtn.title = 'Vorlesen';
+            speakBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;opacity:0.5;padding:0 2px';
+            speakBtn.onclick = () => speak(text);
+            labelRow.appendChild(label);
+            labelRow.appendChild(speakBtn);
+            div.appendChild(labelRow);
             div.appendChild(renderText(text));
         } else {
             div.appendChild(document.createTextNode(text));
