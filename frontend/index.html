@@ -655,9 +655,14 @@
     });
 
     ttsBtn.addEventListener('click', () => {
-        ttsEnabled = !ttsEnabled;
-        ttsBtn.className = 'btn' + (ttsEnabled ? ' active' : '');
-        if (!ttsEnabled) speechSynthesis.cancel();
+        if (speechSynthesis.speaking) {
+            // Gerade am Sprechen → abbrechen
+            speechSynthesis.cancel();
+        } else {
+            // Nicht am Sprechen → ein/ausschalten
+            ttsEnabled = !ttsEnabled;
+            ttsBtn.className = 'btn' + (ttsEnabled ? ' active' : '');
+        }
     });
     ttsBtn.className = 'btn active';
 
