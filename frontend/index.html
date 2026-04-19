@@ -236,7 +236,7 @@
             min-height: 16px;
         }
 
-        #agent-btn {
+        #agent-btn, #helpdesk-btn {
             background: #2a2a2a;
             color: #e0e0e0;
             border: 1px solid #444;
@@ -251,6 +251,12 @@
         #agent-btn.active {
             background: #7c3aed;
             border-color: #7c3aed;
+            color: white;
+        }
+
+        #helpdesk-btn.active {
+            background: #0e7490;
+            border-color: #0e7490;
             color: white;
         }
 
@@ -285,6 +291,7 @@
     <div id="controls-row">
         <span id="speech-status"></span>
         <div style="display:flex;gap:6px;align-items:center">
+            <button id="helpdesk-btn" title="Helpdesk-Modus (Agrargemeinschaft-Docs)" style="display:none">📋 Helpdesk</button>
             <button id="agent-btn" title="Agent-Modus (Repo-Zugriff)">🤖 Agent</button>
             <button class="btn" id="tts-btn" title="Vorlesen ein/aus">🔊</button>
             <button id="clear-btn">Chat leeren</button>
@@ -321,8 +328,10 @@
     let isRecording = false;
     let autoListen = false;
     let agentMode = false;
+    let helpdeskMode = false;
     let userRole = 'user';
     const agentBtn = document.getElementById('agent-btn');
+    const helpdeskBtn = document.getElementById('helpdesk-btn');
 
     // Rolle laden
     async function loadMe() {
@@ -332,6 +341,12 @@
             userRole = me.role || 'user';
             if (userRole === 'user') {
                 agentBtn.style.display = 'none';
+                helpdeskBtn.style.display = 'none';
+            } else {
+                helpdeskBtn.style.display = '';
+                // Gespeicherten Helpdesk-Status wiederherstellen
+                helpdeskMode = me.helpdesk_mode || false;
+                helpdeskBtn.className = helpdeskMode ? 'active' : '';
             }
         } catch(e) {}
     }
@@ -488,12 +503,30 @@
         addMessage('ai', 'Chat geleert. Wie kann ich helfen?');
     });
 
-    // TTS
+    // Agent-Button
     agentBtn.addEventListener('click', () => {
         agentMode = !agentMode;
         agentBtn.className = agentMode ? 'active' : '';
         if (agentMode) {
             addMessage('ai', '🤖 Agent-Modus aktiv. Ich habe Zugriff auf die Repositories und kann Code lesen, Git-Status prüfen und Fragen über den Code beantworten.');
+        }
+    });
+
+    // Helpdesk-Button
+    helpdeskBtn.addEventListener('click', async () => {
+        helpdeskMode = !helpdeskMode;
+        helpdeskBtn.className = helpdeskMode ? 'active' : '';
+        try {
+            await fetch(basePath + '/api/helpdesk-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: helpdeskMode }),
+            });
+        } catch(e) {}
+        if (helpdeskMode) {
+            addMessage('ai', '📋 Helpdesk-Modus aktiv. Ich beantworte Fragen zur Agrargemeinschaft-Software anhand der Dokumentation.');
+        } else {
+            addMessage('ai', '📋 Helpdesk-Modus deaktiviert.');
         }
     });
 

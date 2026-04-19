@@ -492,7 +492,20 @@ def me():
         'role': session.get('role', 'user'),
         'repos': session.get('repos', []),
         'email': session.get('email', ''),
+        'helpdesk_mode': session.get('helpdesk_mode', False),
     })
+
+
+@app.route('/api/helpdesk-mode', methods=['POST'])
+@require_auth
+def toggle_helpdesk_mode():
+    """Nur für Admin/Developer: Helpdesk-Modus in der Session umschalten."""
+    role = session.get('role', 'user')
+    if role == 'user':
+        return jsonify({'error': 'Nicht erlaubt'}), 403
+    enabled = request.json.get('enabled', False)
+    session['helpdesk_mode'] = bool(enabled)
+    return jsonify({'helpdesk_mode': session['helpdesk_mode']})
 
 
 @app.route('/api/models')
@@ -797,8 +810,13 @@ def handle_chat(data):
     messages = data.get('messages', [])
     model_id = data.get('model', 'claude-sonnet-4-6')
     provider = data.get('provider', 'anthropic')
+    role = session.get('role', 'user')
+    helpdesk_mode = session.get('helpdesk_mode', False)
     ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
     MISTRAL_API_KEY = os.environ.get('MISTRAL_API_KEY', '')
+    # Helpdesk-System-Prompt: immer für user-Rolle, für andere nur wenn Modus aktiv
+    use_helpdesk = (role == 'user') or helpdesk_mode
+    system_prompt = build_user_system() if use_helpdesk else None
     try:
         if provider == 'anthropic':
             if not ANTHROPIC_API_KEY:
@@ -806,7 +824,10 @@ def handle_chat(data):
                 return
             import anthropic
             client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-            response = client.messages.create(model=model_id, max_tokens=2048, messages=messages)
+            kwargs = {'model': model_id, 'max_tokens': 2048, 'messages': messages}
+            if system_prompt:
+                kwargs['system'] = system_prompt
+            response = client.messages.create(**kwargs)
             text = response.content[0].text
         elif provider == 'mistral':
             if not MISTRAL_API_KEY:
@@ -814,7 +835,10 @@ def handle_chat(data):
                 return
             from mistralai import Mistral
             client = Mistral(api_key=MISTRAL_API_KEY)
-            response = client.chat.complete(model=model_id, messages=messages)
+            msgs = messages
+            if system_prompt:
+                msgs = [{'role': 'system', 'content': system_prompt}] + list(messages)
+            response = client.chat.complete(model=model_id, messages=msgs)
             text = response.choices[0].message.content
         else:
             emit('error', {'message': f'Unbekannter Provider: {provider}'})
