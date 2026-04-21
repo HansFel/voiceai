@@ -7,4 +7,14 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - REPOS_BASE=/repos
+      - APP_URL=https://mgrattenberg.duckdns.org/wsl-voiceai
+    volumes:
+      - /home/mgserver/Betrieb:/repos/Betrieb
+      - /home/mgserver/AgroBetrieb:/repos/AgroBetrieb
+      - /home/mgserver/Gemeinschaft:/repos/Gemeinschaft
+      - /home/mgserver/MGRSoftware:/repos/MGRSoftware
+      - /home/mgserver/mgrsoftware-pro:/repos/mgrsoftware-pro
+      - /mnt/z/voiceai:/repos/voiceai
+      - /mnt/z/voiceai/data:/data
     restart: unless-stopped

@@ -96,6 +96,37 @@
             font-size: 13px;
         }
 
+        .msg.ai pre {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 12px;
+            overflow-x: auto;
+            font-size: 13px;
+            margin: 8px 0;
+            position: relative;
+        }
+
+        .msg.ai code {
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            background: #2a2a2a;
+            color: #aaa;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        .copy-btn:hover { background: #3a3a3a; color: #fff; }
+
         .msg-label {
             font-size: 11px;
             opacity: 0.5;
@@ -204,6 +235,146 @@
             color: #888;
             min-height: 16px;
         }
+
+        #agent-btn, #helpdesk-btn {
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            font-size: 13px;
+            padding: 4px 10px;
+            cursor: pointer;
+            height: auto;
+            width: auto;
+            border-radius: 6px;
+        }
+
+        #agent-btn.active {
+            background: #7c3aed;
+            border-color: #7c3aed;
+            color: white;
+        }
+
+        #helpdesk-btn.active {
+            background: #0e7490;
+            border-color: #0e7490;
+            color: white;
+        }
+
+        #admin-link {
+            font-size: 12px;
+            color: #888;
+            text-decoration: none;
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid #444;
+            display: none;
+        }
+        #admin-link:hover { color: #e0e0e0; border-color: #666; }
+
+        #helpdesk-wrap {
+            position: relative;
+            display: none;
+        }
+
+        #helpdesk-dropdown {
+            position: absolute;
+            bottom: calc(100% + 6px);
+            right: 0;
+            background: #1e1e1e;
+            border: 1px solid #444;
+            border-radius: 8px;
+            min-width: 220px;
+            max-width: 90vw;
+            max-height: 60vh;
+            overflow-y: auto;
+            z-index: 200;
+            display: none;
+            box-shadow: 0 4px 20px #000a;
+        }
+
+        #helpdesk-dropdown.open { display: block; }
+
+        .hd-option {
+            padding: 8px 14px;
+            font-size: 13px;
+            cursor: pointer;
+            color: #e0e0e0;
+            border-bottom: 1px solid #333;
+        }
+        .hd-option:last-child { border-bottom: none; }
+        .hd-option:hover { background: #2a2a2a; }
+        .hd-option.selected { color: #38bdf8; }
+        .hd-option.off { color: #888; }
+
+        .msg.agent-status {
+            background: #1a1a2e;
+            border: 1px solid #7c3aed33;
+            color: #a78bfa;
+            align-self: center;
+            font-size: 12px;
+            font-style: italic;
+        }
+
+        .msg.code-agent {
+            background: #0d1a0d;
+            border: 1px solid #166534;
+            color: #4ade80;
+            align-self: stretch;
+            font-size: 13px;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            max-width: 100%;
+        }
+
+        #confirm-bar {
+            display: none;
+            background: #1a1a0d;
+            border: 1px solid #ca8a04;
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: #fde047;
+        }
+
+        #confirm-bar .confirm-text {
+            margin-bottom: 8px;
+        }
+
+        #confirm-bar .confirm-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        #confirm-yes {
+            background: #166534;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 5px 14px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        #confirm-no {
+            background: #7f1d1d;
+            color: #fca5a5;
+            border: none;
+            border-radius: 6px;
+            padding: 5px 14px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        #repo-select {
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 13px;
+            margin-left: 8px;
+        }
     </style>
 </head>
 <body>
@@ -211,6 +382,7 @@
 <header>
     <div id="status-dot"></div>
     <h1>VoiceAI</h1>
+    <a id="admin-link" href="">⚙ Admin</a>
     <select id="model-select">
         <option value="">Laden...</option>
     </select>
@@ -227,8 +399,29 @@
     <div id="controls-row">
         <span id="speech-status"></span>
         <div style="display:flex;gap:6px;align-items:center">
+            <div id="helpdesk-wrap">
+                <button id="helpdesk-btn" title="Helpdesk-Modus – Repo wählen">📋 Helpdesk</button>
+                <div id="helpdesk-dropdown"></div>
+            </div>
+            <button id="agent-btn" title="Agent-Modus (Repo-Zugriff)">🤖 Agent</button>
             <button class="btn" id="tts-btn" title="Vorlesen ein/aus">🔊</button>
             <button id="clear-btn">Chat leeren</button>
+        </div>
+    </div>
+    <div id="confirm-bar">
+        <div class="confirm-text">🛠️ Entwicklungsauftrag erkannt — soll ich das umsetzen?<br>
+            <small id="confirm-preview" style="color:#a3a3a3"></small>
+        </div>
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+            <select id="repo-select"><option value="">Repo wählen...</option></select>
+            <select id="code-agent-provider">
+                <option value="mistral">Mistral Large</option>
+                <option value="anthropic">Claude Sonnet</option>
+            </select>
+            <div class="confirm-buttons">
+                <button id="confirm-yes">✓ Ja, umsetzen</button>
+                <button id="confirm-no">✕ Nein</button>
+            </div>
         </div>
     </div>
     <div id="input-row">
@@ -238,9 +431,16 @@
     </div>
 </footer>
 
-<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js" crossorigin="anonymous"></script>
 <script>
-    const socket = io();
+    // basePath: alles vor dem letzten Segment (z.B. '/voiceai' wenn URL='/voiceai/')
+    const pathSegments = window.location.pathname.replace(/\/$/, '').split('/').filter(p => p);
+    // Wenn die Seite von /voiceai/ oder /voiceai geladen wird → basePath = '/voiceai'
+    // Wenn von / → basePath = ''
+    const basePath = pathSegments.length > 0 ? '/' + pathSegments[0] : '';
+    // Strip-Prefix: Traefik entfernt den Prefix, daher socket.io immer ohne basePath
+    const socketPath = '/socket.io';
+    const socket = io({ path: socketPath });
     const chat = document.getElementById('chat');
     const textInput = document.getElementById('text-input');
     const sendBtn = document.getElementById('send-btn');
@@ -255,23 +455,149 @@
     let ttsEnabled = true;
     let recognition = null;
     let isRecording = false;
+    let autoListen = false;
+    let agentMode = false;
+    let helpdeskMode = false;
+    let helpdeskRepo = null;
+    let userRole = 'user';
+    let pendingDevPrompt = null;
+    let codeAgentOutputDiv = null;
+    const agentBtn = document.getElementById('agent-btn');
+    const helpdeskBtn = document.getElementById('helpdesk-btn');
+    const helpdeskWrap = document.getElementById('helpdesk-wrap');
+    const helpdeskDropdown = document.getElementById('helpdesk-dropdown');
+    const adminLink = document.getElementById('admin-link');
+    const confirmBar = document.getElementById('confirm-bar');
+    const confirmPreview = document.getElementById('confirm-preview');
+    const confirmYes = document.getElementById('confirm-yes');
+    const confirmNo = document.getElementById('confirm-no');
+    const repoSelect = document.getElementById('repo-select');
+
+    // Rolle laden
+    async function loadMe() {
+        try {
+            const res = await fetch(basePath + '/api/me');
+            const me = await res.json();
+            userRole = me.role || 'user';
+            if (userRole === 'user') {
+                agentBtn.style.display = 'none';
+                helpdeskWrap.style.display = 'none';
+                adminLink.style.display = 'none';
+            } else {
+                helpdeskWrap.style.display = 'flex';
+                helpdeskMode = me.helpdesk_mode || false;
+                helpdeskRepo = me.helpdesk_repo || null;
+                updateHelpdeskBtn();
+                if (helpdeskMode) loadHelpdeskRepos();
+                if (userRole === 'admin') {
+                    adminLink.style.display = '';
+                    adminLink.href = basePath + '/admin';
+                }
+            }
+        } catch(e) {}
+    }
+
+    function updateHelpdeskBtn() {
+        helpdeskBtn.className = helpdeskMode ? 'active' : '';
+        if (helpdeskMode && helpdeskRepo) {
+            const name = helpdeskRepo.split('/').pop();
+            helpdeskBtn.textContent = '📋 ' + name;
+        } else if (helpdeskMode) {
+            helpdeskBtn.textContent = '📋 Helpdesk';
+        } else {
+            helpdeskBtn.textContent = '📋 Helpdesk';
+        }
+    }
+
+    async function loadHelpdeskRepos() {
+        try {
+            const res = await fetch(basePath + '/api/helpdesk-repos');
+            const repos = await res.json();
+            helpdeskDropdown.innerHTML = '';
+            // "Aus"-Option
+            const off = document.createElement('div');
+            off.className = 'hd-option off' + (!helpdeskMode ? ' selected' : '');
+            off.textContent = '✕ Helpdesk aus';
+            off.onclick = () => setHelpdeskRepo(false, null);
+            helpdeskDropdown.appendChild(off);
+            // Repo-Optionen
+            repos.forEach(r => {
+                const el = document.createElement('div');
+                el.className = 'hd-option' + (helpdeskRepo === r.path ? ' selected' : '');
+                el.textContent = '📋 ' + (r.title || r.repo);
+                el.onclick = () => setHelpdeskRepo(true, r.path, r.title || r.repo);
+                helpdeskDropdown.appendChild(el);
+            });
+            helpdeskDropdown.classList.add('open');
+        } catch(e) {}
+    }
+
+    async function setHelpdeskRepo(enabled, path, repoName) {
+        helpdeskMode = enabled;
+        helpdeskRepo = path;
+        helpdeskDropdown.classList.remove('open');
+        updateHelpdeskBtn();
+        try {
+            await fetch(basePath + '/api/helpdesk-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled, repo: path }),
+            });
+        } catch(e) {}
+        if (enabled) {
+            const label = repoName || 'Helpdesk';
+            addMessage('ai', `📋 Helpdesk aktiv: ${label}`);
+        } else {
+            addMessage('ai', '📋 Helpdesk deaktiviert.');
+        }
+    }
+
+    // Dropdown schließen bei Klick außerhalb
+    document.addEventListener('click', (e) => {
+        if (!helpdeskWrap.contains(e.target)) {
+            helpdeskDropdown.classList.remove('open');
+        }
+    });
 
     // Socket.IO
     socket.on('connect', () => {
         statusDot.className = 'connected';
         loadModels();
+        loadMe();
     });
 
     socket.on('disconnect', () => {
         statusDot.className = '';
     });
 
+    socket.on('agent_status', (data) => {
+        const div = document.createElement('div');
+        div.className = 'msg agent-status';
+        div.id = 'agent-status-msg';
+        div.textContent = data.text;
+        const old = document.getElementById('agent-status-msg');
+        if (old) old.remove();
+        chat.appendChild(div);
+        chat.scrollTop = chat.scrollHeight;
+    });
+
     socket.on('response', (data) => {
         statusDot.className = 'connected';
+        const old = document.getElementById('agent-status-msg');
+        if (old) old.remove();
         addMessage('ai', data.text, data.model);
         messages.push({ role: 'assistant', content: data.text });
-        if (ttsEnabled) speak(data.text);
         sendBtn.disabled = false;
+        if (ttsEnabled) {
+            speak(data.text, () => {
+                // Nach dem Vorlesen automatisch wieder zuhören wenn Mic aktiv war
+                if (recognition && autoListen) {
+                    recognition.start();
+                }
+            });
+        } else if (recognition && autoListen) {
+            recognition.start();
+        }
     });
 
     socket.on('error', (data) => {
@@ -280,9 +606,74 @@
         sendBtn.disabled = false;
     });
 
+    socket.on('dev_intent_result', (data) => {
+        if (data.is_dev && userRole !== 'user') {
+            pendingDevPrompt = data.text;
+            confirmPreview.textContent = data.text.substring(0, 120) + (data.text.length > 120 ? '...' : '');
+            confirmBar.style.display = 'block';
+            loadReposForSelect();
+        }
+    });
+
+    socket.on('code_agent_output', (data) => {
+        if (!codeAgentOutputDiv) {
+            codeAgentOutputDiv = document.createElement('div');
+            codeAgentOutputDiv.className = 'msg code-agent';
+            chat.appendChild(codeAgentOutputDiv);
+        }
+        codeAgentOutputDiv.textContent += data.text;
+        chat.scrollTop = chat.scrollHeight;
+    });
+
+    socket.on('code_agent_done', (data) => {
+        if (codeAgentOutputDiv) {
+            const exitCode = data.exit_code || 0;
+            codeAgentOutputDiv.textContent += exitCode === 0 ? '\n\n✓ Fertig!' : `\n\n⚠️ Exit-Code: ${exitCode}`;
+            if (ttsEnabled) speak(exitCode === 0 ? 'Fertig! Der Code wurde umgesetzt.' : 'Es gab einen Fehler.');
+            codeAgentOutputDiv = null;
+        }
+        sendBtn.disabled = false;
+        statusDot.className = 'connected';
+    });
+
+    async function loadReposForSelect() {
+        try {
+            const res = await fetch(basePath + '/api/helpdesk-repos');
+            const repos = await res.json();
+            repoSelect.innerHTML = '<option value="">Repo wählen...</option>';
+            repos.forEach(r => {
+                if (r.path) {
+                    const opt = document.createElement('option');
+                    opt.value = r.path;
+                    opt.textContent = r.title || r.repo;
+                    repoSelect.appendChild(opt);
+                }
+            });
+            if (helpdeskRepo) repoSelect.value = helpdeskRepo;
+        } catch(e) {}
+    }
+
+    confirmYes.addEventListener('click', () => {
+        const repoPath = repoSelect.value;
+        if (!repoPath) { alert('Bitte zuerst ein Repo wählen'); return; }
+        const provider = document.getElementById('code-agent-provider').value;
+        confirmBar.style.display = 'none';
+        codeAgentOutputDiv = null;
+        statusDot.className = 'thinking';
+        sendBtn.disabled = true;
+        socket.emit('code_agent', { prompt: pendingDevPrompt, repo_path: repoPath, provider });
+        pendingDevPrompt = null;
+    });
+
+    confirmNo.addEventListener('click', () => {
+        confirmBar.style.display = 'none';
+        pendingDevPrompt = null;
+        addMessage('ai', '👍 OK, kein Code geändert.');
+    });
+
     // Models
     async function loadModels() {
-        const res = await fetch('/api/models');
+        const res = await fetch(basePath + '/api/models');
         const models = await res.json();
         modelSelect.innerHTML = models.map(m =>
             `<option value="${m.id}" data-provider="${m.provider}">${m.name}</option>`
@@ -290,6 +681,51 @@
         if (!models.length) {
             modelSelect.innerHTML = '<option value="">Kein API-Key</option>';
         }
+        // Zuletzt verwendetes Modell wiederherstellen
+        const saved = localStorage.getItem('voiceai_model');
+        if (saved) {
+            const opt = modelSelect.querySelector(`option[value="${saved}"]`);
+            if (opt) opt.selected = true;
+        }
+    }
+
+    modelSelect.addEventListener('change', () => {
+        localStorage.setItem('voiceai_model', modelSelect.value);
+    });
+
+    // Markdown Code-Blöcke rendern
+    function renderText(text) {
+        const parts = text.split(/(```[\s\S]*?```)/g);
+        const frag = document.createDocumentFragment();
+        parts.forEach(part => {
+            if (part.startsWith('```')) {
+                const lines = part.slice(3, -3).split('\n');
+                const lang = lines[0].trim();
+                const code = lines.slice(lang ? 1 : 0).join('\n');
+                const pre = document.createElement('pre');
+                const codeEl = document.createElement('code');
+                codeEl.textContent = code;
+                pre.appendChild(codeEl);
+                // Kopieren-Button
+                const btn = document.createElement('button');
+                btn.className = 'copy-btn';
+                btn.textContent = 'Kopieren';
+                btn.onclick = () => {
+                    navigator.clipboard.writeText(code);
+                    btn.textContent = '✓';
+                    setTimeout(() => btn.textContent = 'Kopieren', 2000);
+                };
+                pre.appendChild(btn);
+                frag.appendChild(pre);
+            } else {
+                // Normaler Text — Zeilenumbrüche erhalten
+                const span = document.createElement('span');
+                span.style.whiteSpace = 'pre-wrap';
+                span.textContent = part;
+                frag.appendChild(span);
+            }
+        });
+        return frag;
     }
 
     // Chat
@@ -297,13 +733,24 @@
         const div = document.createElement('div');
         div.className = 'msg ' + role;
         if (role === 'ai') {
+            const labelRow = document.createElement('div');
+            labelRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:4px';
             const label = document.createElement('div');
             label.className = 'msg-label';
+            label.style.margin = '0';
             label.textContent = model || 'AI';
-            div.appendChild(label);
+            const speakBtn = document.createElement('button');
+            speakBtn.textContent = '🔊';
+            speakBtn.title = 'Vorlesen';
+            speakBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;opacity:0.5;padding:0 2px';
+            speakBtn.onclick = () => speak(text);
+            labelRow.appendChild(label);
+            labelRow.appendChild(speakBtn);
+            div.appendChild(labelRow);
+            div.appendChild(renderText(text));
+        } else {
+            div.appendChild(document.createTextNode(text));
         }
-        const content = document.createTextNode(text);
-        div.appendChild(content);
         chat.appendChild(div);
         chat.scrollTop = chat.scrollHeight;
     }
@@ -312,6 +759,10 @@
         if (!text.trim()) return;
         addMessage('user', text);
         messages.push({ role: 'user', content: text });
+        // Intent-Erkennung für Developer/Admin
+        if (userRole !== 'user') {
+            socket.emit('check_dev_intent', { text });
+        }
 
         const selected = modelSelect.selectedOptions[0];
         const model = selected?.value || '';
@@ -320,7 +771,11 @@
         statusDot.className = 'thinking';
         sendBtn.disabled = true;
 
-        socket.emit('chat', { messages, model, provider });
+        if (agentMode) {
+            socket.emit('agent', { messages, model, provider });
+        } else {
+            socket.emit('chat', { messages, model, provider, helpdesk_repo: helpdeskMode ? helpdeskRepo : null });
+        }
         textInput.value = '';
         textInput.style.height = 'auto';
     }
@@ -345,21 +800,58 @@
         addMessage('ai', 'Chat geleert. Wie kann ich helfen?');
     });
 
-    // TTS
+    // Agent-Button
+    agentBtn.addEventListener('click', () => {
+        agentMode = !agentMode;
+        agentBtn.className = agentMode ? 'active' : '';
+        if (agentMode) {
+            addMessage('ai', '🤖 Agent-Modus aktiv. Ich habe Zugriff auf die Repositories und kann Code lesen, Git-Status prüfen und Fragen über den Code beantworten.');
+        }
+    });
+
+    // Helpdesk-Button — Dropdown öffnen/schließen
+    helpdeskBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (helpdeskDropdown.classList.contains('open')) {
+            helpdeskDropdown.classList.remove('open');
+        } else {
+            loadHelpdeskRepos();
+        }
+    });
+
+    let ttsStopped = false;
+
     ttsBtn.addEventListener('click', () => {
-        ttsEnabled = !ttsEnabled;
-        ttsBtn.className = 'btn' + (ttsEnabled ? ' active' : '');
-        if (!ttsEnabled) speechSynthesis.cancel();
+        if (speechSynthesis.speaking) {
+            ttsStopped = true;
+            speechSynthesis.cancel();
+        } else {
+            ttsEnabled = !ttsEnabled;
+            ttsBtn.className = 'btn' + (ttsEnabled ? ' active' : '');
+        }
     });
     ttsBtn.className = 'btn active';
 
-    function speak(text) {
+    function speak(text, onEnd) {
+        ttsStopped = false;
         speechSynthesis.cancel();
-        const clean = text.replace(/```[\s\S]*?```/g, 'Code-Block').replace(/[*_`#]/g, '');
-        const utt = new SpeechSynthesisUtterance(clean.substring(0, 500));
-        utt.lang = 'de-DE';
-        utt.rate = 1.1;
-        speechSynthesis.speak(utt);
+        const clean = text
+            .replace(/```[\s\S]*?```/g, 'Code-Block')
+            .replace(/[*_`#|]/g, '')
+            .replace(/\n+/g, ' ')
+            .trim();
+        const sentences = clean.match(/[^.!?]+[.!?]+/g) || [clean];
+        let i = 0;
+        function next() {
+            if (ttsStopped || i >= sentences.length) { if (onEnd && !ttsStopped) onEnd(); return; }
+            const utt = new SpeechSynthesisUtterance(sentences[i++].trim());
+            utt.lang = 'de-DE';
+            utt.rate = 1.1;
+            utt.onend = next;
+            utt.onerror = (e) => { if (e.error !== 'interrupted') next(); };
+            speechSynthesis.speak(utt);
+        }
+        next();
     }
 
     // STT
@@ -381,7 +873,8 @@
                 .map(r => r[0].transcript).join('');
             textInput.value = transcript;
             if (e.results[e.results.length - 1].isFinal) {
-                speechStatus.textContent = '✓ Erkannt';
+                speechStatus.textContent = '✓ Erkannt – sende...';
+                setTimeout(() => sendMessage(textInput.value), 300);
             }
         };
 
@@ -393,14 +886,26 @@
 
         recognition.onerror = (e) => {
             isRecording = false;
-            micBtn.className = 'btn';
-            speechStatus.textContent = '⚠️ ' + e.error;
+            micBtn.className = 'btn recording';
+            if (e.error === 'network') {
+                speechStatus.textContent = '↻ Verbindung...';
+                if (autoListen) setTimeout(() => { try { recognition.start(); } catch(ex) {} }, 1500);
+            } else if (e.error === 'no-speech') {
+                speechStatus.textContent = '🎤 Warte...';
+                if (autoListen) setTimeout(() => { try { recognition.start(); } catch(ex) {} }, 500);
+            } else {
+                micBtn.className = 'btn';
+                autoListen = false;
+                speechStatus.textContent = '⚠️ ' + e.error;
+            }
         };
 
         micBtn.addEventListener('click', () => {
             if (isRecording) {
+                autoListen = false;
                 recognition.stop();
             } else {
+                autoListen = true;
                 recognition.start();
             }
         });
