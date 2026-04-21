@@ -883,17 +883,14 @@
     // Coding-Modus
     async function loadCodingRepos() {
         try {
-            const res = await fetch(basePath + '/api/repos');
-            const data = await res.json();
-            const repos = data.repos || data;
+            const res = await fetch(basePath + '/api/helpdesk-repos');
+            const repos = await res.json();
             codingRepoSelect.innerHTML = '<option value="">Repo wählen...</option>';
             repos.forEach(r => {
+                if (!r.path) return;
                 const opt = document.createElement('option');
-                // r ist entweder ein String (Name) oder Objekt mit path/repo
-                const name = typeof r === 'string' ? r : (r.title || r.repo || r.name || r);
-                const path = typeof r === 'string' ? '/repos/' + r : (r.path || '/repos/' + r.repo);
-                opt.value = path;
-                opt.textContent = name;
+                opt.value = r.path;
+                opt.textContent = r.title || r.repo;
                 codingRepoSelect.appendChild(opt);
             });
         } catch(e) { console.error('loadCodingRepos:', e); }
