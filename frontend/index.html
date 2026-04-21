@@ -236,7 +236,7 @@
             min-height: 16px;
         }
 
-        #agent-btn, #helpdesk-btn {
+        #agent-btn, #helpdesk-btn, #coding-btn {
             background: #2a2a2a;
             color: #e0e0e0;
             border: 1px solid #444;
@@ -246,6 +246,34 @@
             height: auto;
             width: auto;
             border-radius: 6px;
+        }
+
+        #coding-btn.active {
+            background: #b45309;
+            border-color: #b45309;
+            color: white;
+        }
+
+        #coding-bar {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: #1a110a;
+            border: 1px solid #b45309;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: #fed7aa;
+        }
+
+        #coding-bar select {
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 13px;
         }
 
         #agent-btn.active {
@@ -403,10 +431,20 @@
                 <button id="helpdesk-btn" title="Helpdesk-Modus – Repo wählen">📋 Helpdesk</button>
                 <div id="helpdesk-dropdown"></div>
             </div>
+            <button id="coding-btn" title="Coding-Modus">💻 Coding</button>
             <button id="agent-btn" title="Agent-Modus (Repo-Zugriff)">🤖 Agent</button>
             <button class="btn" id="tts-btn" title="Vorlesen ein/aus">🔊</button>
             <button id="clear-btn">Chat leeren</button>
         </div>
+    </div>
+    <div id="coding-bar">
+        <span>💻 Coding-Modus:</span>
+        <select id="coding-repo-select"><option value="">Repo wählen...</option></select>
+        <select id="coding-provider-select">
+            <option value="mistral">Mistral Large</option>
+            <option value="anthropic">Claude Sonnet</option>
+        </select>
+        <span id="coding-status" style="color:#f97316;font-size:12px"></span>
     </div>
     <div id="confirm-bar">
         <div class="confirm-text">🛠️ Entwicklungsauftrag erkannt — soll ich das umsetzen?<br>
@@ -432,6 +470,7 @@
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js" crossorigin="anonymous"></script>
+<!-- v2 -->
 <script>
     // basePath: alles vor dem letzten Segment (z.B. '/voiceai' wenn URL='/voiceai/')
     const pathSegments = window.location.pathname.replace(/\/$/, '').split('/').filter(p => p);
@@ -462,6 +501,7 @@
     let userRole = 'user';
     let pendingDevPrompt = null;
     let codeAgentOutputDiv = null;
+    let codingMode = false;
     const agentBtn = document.getElementById('agent-btn');
     const helpdeskBtn = document.getElementById('helpdesk-btn');
     const helpdeskWrap = document.getElementById('helpdesk-wrap');
@@ -472,6 +512,11 @@
     const confirmYes = document.getElementById('confirm-yes');
     const confirmNo = document.getElementById('confirm-no');
     const repoSelect = document.getElementById('repo-select');
+    const codingBtn = document.getElementById('coding-btn');
+    const codingBar = document.getElementById('coding-bar');
+    const codingRepoSelect = document.getElementById('coding-repo-select');
+    const codingProviderSelect = document.getElementById('coding-provider-select');
+    const codingStatus = document.getElementById('coding-status');
 
     // Rolle laden
     async function loadMe() {
@@ -634,6 +679,11 @@
         }
         sendBtn.disabled = false;
         statusDot.className = 'connected';
+        if (codingMode) {
+            const ok = (data.exit_code || 0) === 0;
+            codingStatus.textContent = ok ? '✅ fertig' : '❌ Fehler';
+            setTimeout(() => { codingStatus.textContent = ''; }, 4000);
+        }
     });
 
     async function loadReposForSelect() {
@@ -695,10 +745,11 @@
 
     // Markdown Code-Blöcke rendern
     function renderText(text) {
-        const parts = text.split(/(```[\s\S]*?```)/g);
+        const backtick3 = '\x60\x60\x60';
+        const parts = text.split(new RegExp('(' + backtick3 + '[\\s\\S]*?' + backtick3 + ')', 'g'));
         const frag = document.createDocumentFragment();
         parts.forEach(part => {
-            if (part.startsWith('```')) {
+            if (part.startsWith(backtick3)) {
                 const lines = part.slice(3, -3).split('\n');
                 const lang = lines[0].trim();
                 const code = lines.slice(lang ? 1 : 0).join('\n');
@@ -759,7 +810,27 @@
         if (!text.trim()) return;
         addMessage('user', text);
         messages.push({ role: 'user', content: text });
-        // Intent-Erkennung für Developer/Admin
+
+        // Coding-Modus: direkt in Code-Agent ohne Bestätigung
+        if (codingMode) {
+            const repoPath = codingRepoSelect.value;
+            const provider = codingProviderSelect.value;
+            if (!repoPath) {
+                codingStatus.textContent = '⚠️ Bitte Repo wählen';
+                textInput.value = '';
+                textInput.style.height = 'auto';
+                return;
+            }
+            codingStatus.textContent = '⚙️ läuft...';
+            sendBtn.disabled = true;
+            codeAgentOutputDiv = null;
+            socket.emit('code_agent', { prompt: text, repo_path: repoPath, provider });
+            textInput.value = '';
+            textInput.style.height = 'auto';
+            return;
+        }
+
+        // Intent-Erkennung für Developer/Admin (nur im Normal-Modus)
         if (userRole !== 'user') {
             socket.emit('check_dev_intent', { text });
         }
@@ -809,6 +880,35 @@
         }
     });
 
+    // Coding-Modus
+    async function loadCodingRepos() {
+        try {
+            const res = await fetch(basePath + '/api/repos');
+            const data = await res.json();
+            const repos = data.repos || data;
+            codingRepoSelect.innerHTML = '<option value="">Repo wählen...</option>';
+            repos.forEach(r => {
+                const opt = document.createElement('option');
+                // r ist entweder ein String (Name) oder Objekt mit path/repo
+                const name = typeof r === 'string' ? r : (r.title || r.repo || r.name || r);
+                const path = typeof r === 'string' ? '/repos/' + r : (r.path || '/repos/' + r.repo);
+                opt.value = path;
+                opt.textContent = name;
+                codingRepoSelect.appendChild(opt);
+            });
+        } catch(e) { console.error('loadCodingRepos:', e); }
+    }
+
+    codingBtn.addEventListener('click', () => {
+        codingMode = !codingMode;
+        codingBtn.className = codingMode ? 'active' : '';
+        codingBar.style.display = codingMode ? 'flex' : 'none';
+        if (codingMode) {
+            loadCodingRepos();
+            addMessage('ai', '💻 Coding-Modus aktiv — jede Nachricht geht direkt in den Code-Agent. Bitte Repo wählen.');
+        }
+    });
+
     // Helpdesk-Button — Dropdown öffnen/schließen
     helpdeskBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -836,8 +936,8 @@
         ttsStopped = false;
         speechSynthesis.cancel();
         const clean = text
-            .replace(/```[\s\S]*?```/g, 'Code-Block')
-            .replace(/[*_`#|]/g, '')
+            .replace(new RegExp('\x60\x60\x60[\\s\\S]*?\x60\x60\x60', 'g'), 'Code-Block')
+            .replace(new RegExp('[*_\x60#|]', 'g'), '')
             .replace(/\n+/g, ' ')
             .trim();
         const sentences = clean.match(/[^.!?]+[.!?]+/g) || [clean];
