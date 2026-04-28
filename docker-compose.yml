@@ -22,9 +22,9 @@ services:
       - /home/mgserver/Gemeinschaft:/repos/Gemeinschaft
       - /home/mgserver/MGRSoftware:/repos/MGRSoftware
       - /home/mgserver/mgrsoftware-pro:/repos/mgrsoftware-pro
-      - /mnt/z/voiceai:/repos/voiceai
+      - /home/mgserver/voiceai:/repos/voiceai
       - /home/mgserver/CodeAgentTest:/repos/CodeAgentTest
-      - /mnt/z/voiceai/data:/data
-      - /mnt/z/voiceai/frontend:/app/frontend
-      - /mnt/z/voiceai/backend:/app/backend
+      - /home/mgserver/voiceai/data:/data
+      - /home/mgserver/voiceai/frontend:/app/frontend
+      - /home/mgserver/voiceai/backend:/app/backend
     restart: unless-stopped
