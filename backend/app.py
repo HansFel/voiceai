@@ -4,6 +4,7 @@ import subprocess
 import smtplib
 import hashlib
 import secrets
+import time
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from functools import wraps
@@ -19,9 +20,9 @@ app = Flask(__name__, static_folder='../frontend', template_folder='../frontend'
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(32))
 app.permanent_session_lifetime = timedelta(hours=24)
 app.config['SESSION_COOKIE_PATH'] = '/'
-
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 ADMIN_PIN   = os.environ.get('ADMIN_PIN', '1234')
 SMTP_HOST   = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
@@ -31,6 +32,10 @@ SMTP_PASS   = os.environ.get('SMTP_PASS', '')
 APP_URL     = os.environ.get('APP_URL', 'https://mgrattenberg.duckdns.org/voiceai')
 REPOS_BASE  = os.environ.get('REPOS_BASE', '/repos')
 USERS_FILE  = os.environ.get('USERS_FILE', '/data/users.json')
+
+_app_origin = '/'.join(APP_URL.split('/')[:3])
+CORS(app, origins=[_app_origin])
+socketio = SocketIO(app, cors_allowed_origins=[_app_origin], async_mode='threading')
 
 serializer = URLSafeTimedSerializer(app.secret_key)
 
@@ -316,15 +321,32 @@ def logout():
 
 # ── Admin Routen ──────────────────────────────────────────────────────────────
 
+_admin_attempts: dict = {}  # ip -> (count, first_attempt_timestamp)
+_ADMIN_MAX_ATTEMPTS = 5
+_ADMIN_LOCKOUT_SECS = 300
+
+
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
+    ip = request.remote_addr
+    now = time.time()
+    count, since = _admin_attempts.get(ip, (0, now))
+    if now - since > _ADMIN_LOCKOUT_SECS:
+        count, since = 0, now
+
     err = ''
     if request.method == 'POST':
-        pin = request.form.get('pin', '')
-        if pin == ADMIN_PIN:
-            session['admin'] = True
-            return redirect(APP_URL + '/admin')
-        err = 'Falscher PIN'
+        if count >= _ADMIN_MAX_ATTEMPTS:
+            err = f'Zu viele Versuche. Bitte {_ADMIN_LOCKOUT_SECS // 60} Minuten warten.'
+        else:
+            pin = request.form.get('pin', '')
+            if pin == ADMIN_PIN:
+                _admin_attempts.pop(ip, None)
+                session['admin'] = True
+                return redirect(APP_URL + '/admin')
+            count += 1
+            _admin_attempts[ip] = (count, since)
+            err = 'Falscher PIN' if count < _ADMIN_MAX_ATTEMPTS else f'Zu viele Versuche. Bitte {_ADMIN_LOCKOUT_SECS // 60} Minuten warten.'
     return f'''<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Admin</title>

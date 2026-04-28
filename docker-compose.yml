@@ -7,8 +7,15 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - SECRET_KEY=${SECRET_KEY:-}
+      - ADMIN_PIN=${ADMIN_PIN:-}
+      - APP_URL=${APP_URL:-https://mgrattenberg.duckdns.org/wsl-voiceai}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
       - REPOS_BASE=/repos
-      - APP_URL=https://mgrattenberg.duckdns.org/wsl-voiceai
+      - USERS_FILE=/data/users.json
     volumes:
       - /home/mgserver/Betrieb:/repos/Betrieb
       - /home/mgserver/AgroBetrieb:/repos/AgroBetrieb
