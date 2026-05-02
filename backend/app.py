@@ -974,11 +974,37 @@ Beziehe dich auf die folgende Dokumentation:\n\n"""
     return base + context if context else base + "(Keine Dokumentation vorhanden)"
 
 
+def build_dev_system(repo_path=None):
+    """Baut den Entwickler-System-Prompt mit optionalem Repo-Kontext aus .voiceai.md."""
+    base = AGENT_SYSTEMS['developer']
+    if not repo_path:
+        return base
+    context = load_voiceai_md(repo_path)
+    if not context:
+        return base
+    repo_name = os.path.basename(repo_path)
+    return base + f"\n\n---\nAktives Repository: **{repo_name}**\n\n{context}"
+
+
+def _validate_path_in_repos(path):
+    """Stellt sicher dass path unter REPOS_BASE liegt (verhindert Path-Traversal)."""
+    if not path:
+        return None
+    try:
+        base = os.path.realpath(REPOS_BASE)
+        real = os.path.realpath(path)
+        if real.startswith(base + os.sep) or real == base:
+            return real
+    except Exception:
+        pass
+    return None
+
+
 def run_agent(messages, model='claude-sonnet-4-6', provider='anthropic', role='developer', allowed_repos=None, repo_path=None):
     if role == 'user':
         system = build_user_system(repo_path=repo_path)
     else:
-        system = AGENT_SYSTEMS.get(role, AGENT_SYSTEMS['developer'])
+        system = build_dev_system(repo_path=repo_path)
     if provider == 'mistral':
         return run_agent_mistral(messages, model, system, allowed_repos)
     else:
@@ -1003,9 +1029,15 @@ def handle_chat(data):
     # helpdesk_repo vom Client (zuverlässiger als Session bei Socket.IO)
     helpdesk_repo = data.get('helpdesk_repo') or session.get('helpdesk_repo', None)
     helpdesk_mode = bool(helpdesk_repo) or (role == 'user')
+    dev_repo = _validate_path_in_repos(data.get('dev_repo'))
     ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
     MISTRAL_API_KEY = os.environ.get('MISTRAL_API_KEY', '')
-    system_prompt = build_user_system(repo_path=helpdesk_repo) if helpdesk_mode else None
+    if helpdesk_mode:
+        system_prompt = build_user_system(repo_path=helpdesk_repo)
+    elif dev_repo and role != 'user':
+        system_prompt = build_dev_system(repo_path=dev_repo)
+    else:
+        system_prompt = None
     try:
         if provider == 'anthropic':
             if not ANTHROPIC_API_KEY:
@@ -1044,6 +1076,7 @@ def handle_agent(data):
     provider = data.get('provider', 'anthropic')
     role = session.get('role', 'user')
     allowed_repos = session.get('repos', []) or None
+    dev_repo = _validate_path_in_repos(data.get('dev_repo'))
     if role == 'user':
         allowed_repos = []
     if provider == 'anthropic' and not os.environ.get('ANTHROPIC_API_KEY'):
@@ -1054,7 +1087,7 @@ def handle_agent(data):
         return
     try:
         emit('agent_status', {'text': '🔍 Agent denkt...'})
-        text = run_agent(messages, model_id, provider=provider, role=role, allowed_repos=allowed_repos)
+        text = run_agent(messages, model_id, provider=provider, role=role, allowed_repos=allowed_repos, repo_path=dev_repo)
         emit('response', {'text': text, 'model': model_id + ' (Agent)'})
     except Exception as e:
         emit('error', {'message': str(e)})

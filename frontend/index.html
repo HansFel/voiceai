@@ -236,7 +236,7 @@
             min-height: 16px;
         }
 
-        #agent-btn, #helpdesk-btn {
+        #agent-btn, #helpdesk-btn, #repo-btn {
             background: #2a2a2a;
             color: #e0e0e0;
             border: 1px solid #444;
@@ -260,6 +260,12 @@
             color: white;
         }
 
+        #repo-btn.active {
+            background: #065f46;
+            border-color: #065f46;
+            color: white;
+        }
+
         #admin-link {
             font-size: 12px;
             color: #888;
@@ -271,12 +277,12 @@
         }
         #admin-link:hover { color: #e0e0e0; border-color: #666; }
 
-        #helpdesk-wrap {
+        #helpdesk-wrap, #repo-wrap {
             position: relative;
             display: none;
         }
 
-        #helpdesk-dropdown {
+        #helpdesk-dropdown, #repo-dropdown {
             position: absolute;
             bottom: calc(100% + 6px);
             right: 0;
@@ -292,7 +298,7 @@
             box-shadow: 0 4px 20px #000a;
         }
 
-        #helpdesk-dropdown.open { display: block; }
+        #helpdesk-dropdown.open, #repo-dropdown.open { display: block; }
 
         .hd-option {
             padding: 8px 14px;
@@ -338,6 +344,10 @@
     <div id="controls-row">
         <span id="speech-status"></span>
         <div style="display:flex;gap:6px;align-items:center">
+            <div id="repo-wrap">
+                <button id="repo-btn" title="Aktives Repository wählen">💻 Repo</button>
+                <div id="repo-dropdown"></div>
+            </div>
             <div id="helpdesk-wrap">
                 <button id="helpdesk-btn" title="Helpdesk-Modus – Repo wählen">📋 Helpdesk</button>
                 <div id="helpdesk-dropdown"></div>
@@ -380,11 +390,16 @@
     let agentMode = false;
     let helpdeskMode = false;
     let helpdeskRepo = null;
+    let devRepo = null;
+    let devRepoName = null;
     let userRole = 'user';
     const agentBtn = document.getElementById('agent-btn');
     const helpdeskBtn = document.getElementById('helpdesk-btn');
     const helpdeskWrap = document.getElementById('helpdesk-wrap');
     const helpdeskDropdown = document.getElementById('helpdesk-dropdown');
+    const repoBtn = document.getElementById('repo-btn');
+    const repoWrap = document.getElementById('repo-wrap');
+    const repoDropdown = document.getElementById('repo-dropdown');
     const adminLink = document.getElementById('admin-link');
 
     // Rolle laden
@@ -396,9 +411,11 @@
             if (userRole === 'user') {
                 agentBtn.style.display = 'none';
                 helpdeskWrap.style.display = 'none';
+                repoWrap.style.display = 'none';
                 adminLink.style.display = 'none';
             } else {
                 helpdeskWrap.style.display = 'flex';
+                repoWrap.style.display = 'flex';
                 helpdeskMode = me.helpdesk_mode || false;
                 helpdeskRepo = me.helpdesk_repo || null;
                 updateHelpdeskBtn();
@@ -466,10 +483,65 @@
         }
     }
 
+    // Repo-Dropdown (Arbeitsrepo für Entwickler)
+    function updateRepoBtn() {
+        if (devRepo) {
+            repoBtn.className = 'active';
+            repoBtn.textContent = '💻 ' + devRepoName;
+        } else {
+            repoBtn.className = '';
+            repoBtn.textContent = '💻 Repo';
+        }
+    }
+
+    async function loadDevRepos() {
+        try {
+            const res = await fetch(basePath + '/api/helpdesk-repos');
+            const repos = await res.json();
+            repoDropdown.innerHTML = '';
+            const off = document.createElement('div');
+            off.className = 'hd-option off' + (!devRepo ? ' selected' : '');
+            off.textContent = '✕ Kein Repo';
+            off.onclick = () => {
+                devRepo = null;
+                devRepoName = null;
+                repoDropdown.classList.remove('open');
+                updateRepoBtn();
+            };
+            repoDropdown.appendChild(off);
+            repos.forEach(r => {
+                const el = document.createElement('div');
+                el.className = 'hd-option' + (devRepo === r.path ? ' selected' : '');
+                el.textContent = '💻 ' + (r.title || r.repo);
+                el.onclick = () => {
+                    devRepo = r.path;
+                    devRepoName = r.title || r.repo;
+                    repoDropdown.classList.remove('open');
+                    updateRepoBtn();
+                    addMessage('ai', `💻 Aktives Repo: ${devRepoName}`);
+                };
+                repoDropdown.appendChild(el);
+            });
+            repoDropdown.classList.add('open');
+        } catch(e) {}
+    }
+
+    repoBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (repoDropdown.classList.contains('open')) {
+            repoDropdown.classList.remove('open');
+        } else {
+            loadDevRepos();
+        }
+    });
+
     // Dropdown schließen bei Klick außerhalb
     document.addEventListener('click', (e) => {
         if (!helpdeskWrap.contains(e.target)) {
             helpdeskDropdown.classList.remove('open');
+        }
+        if (!repoWrap.contains(e.target)) {
+            repoDropdown.classList.remove('open');
         }
     });
 
@@ -617,9 +689,9 @@
         sendBtn.disabled = true;
 
         if (agentMode) {
-            socket.emit('agent', { messages, model, provider });
+            socket.emit('agent', { messages, model, provider, dev_repo: devRepo });
         } else {
-            socket.emit('chat', { messages, model, provider, helpdesk_repo: helpdeskMode ? helpdeskRepo : null });
+            socket.emit('chat', { messages, model, provider, helpdesk_repo: helpdeskMode ? helpdeskRepo : null, dev_repo: devRepo });
         }
         textInput.value = '';
         textInput.style.height = 'auto';
