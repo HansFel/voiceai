@@ -17,7 +17,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 load_dotenv()
 
 app = Flask(__name__, static_folder='../frontend', template_folder='../frontend')
-app.secret_key = os.environ.get('SECRET_KEY', os.urandom(32))
+app.secret_key = os.environ.get('SECRET_KEY') or os.urandom(32)
 app.permanent_session_lifetime = timedelta(hours=24)
 app.config['SESSION_COOKIE_PATH'] = '/'
 app.config['SESSION_COOKIE_SECURE'] = True
