@@ -7,4 +7,24 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - SECRET_KEY=${SECRET_KEY:-}
+      - ADMIN_PIN=${ADMIN_PIN:-}
+      - APP_URL=${APP_URL:-https://mgrattenberg.duckdns.org/wsl-voiceai}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - REPOS_BASE=/repos
+      - USERS_FILE=/data/users.json
+    volumes:
+      - /home/mgserver/Betrieb:/repos/Betrieb
+      - /home/mgserver/AgroBetrieb:/repos/AgroBetrieb
+      - /home/mgserver/Gemeinschaft:/repos/Gemeinschaft
+      - /home/mgserver/MGRSoftware:/repos/MGRSoftware
+      - /home/mgserver/mgrsoftware-pro:/repos/mgrsoftware-pro
+      - /home/mgserver/voiceai:/repos/voiceai
+      - /home/mgserver/CodeAgentTest:/repos/CodeAgentTest
+      - /home/mgserver/voiceai/data:/data
+      - /home/mgserver/voiceai/frontend:/app/frontend
+      - /home/mgserver/voiceai/backend:/app/backend
     restart: unless-stopped

@@ -4,6 +4,7 @@ import subprocess
 import smtplib
 import hashlib
 import secrets
+import time
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from functools import wraps
@@ -19,9 +20,9 @@ app = Flask(__name__, static_folder='../frontend', template_folder='../frontend'
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(32))
 app.permanent_session_lifetime = timedelta(hours=24)
 app.config['SESSION_COOKIE_PATH'] = '/'
-
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 ADMIN_PIN   = os.environ.get('ADMIN_PIN', '1234')
 SMTP_HOST   = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
@@ -31,6 +32,10 @@ SMTP_PASS   = os.environ.get('SMTP_PASS', '')
 APP_URL     = os.environ.get('APP_URL', 'https://mgrattenberg.duckdns.org/voiceai')
 REPOS_BASE  = os.environ.get('REPOS_BASE', '/repos')
 USERS_FILE  = os.environ.get('USERS_FILE', '/data/users.json')
+
+_app_origin = '/'.join(APP_URL.split('/')[:3])
+CORS(app, origins=[_app_origin])
+socketio = SocketIO(app, cors_allowed_origins=[_app_origin], async_mode='threading')
 
 serializer = URLSafeTimedSerializer(app.secret_key)
 
@@ -316,15 +321,32 @@ def logout():
 
 # ── Admin Routen ──────────────────────────────────────────────────────────────
 
+_admin_attempts: dict = {}  # ip -> (count, first_attempt_timestamp)
+_ADMIN_MAX_ATTEMPTS = 5
+_ADMIN_LOCKOUT_SECS = 300
+
+
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
+    ip = request.remote_addr
+    now = time.time()
+    count, since = _admin_attempts.get(ip, (0, now))
+    if now - since > _ADMIN_LOCKOUT_SECS:
+        count, since = 0, now
+
     err = ''
     if request.method == 'POST':
-        pin = request.form.get('pin', '')
-        if pin == ADMIN_PIN:
-            session['admin'] = True
-            return redirect(APP_URL + '/admin')
-        err = 'Falscher PIN'
+        if count >= _ADMIN_MAX_ATTEMPTS:
+            err = f'Zu viele Versuche. Bitte {_ADMIN_LOCKOUT_SECS // 60} Minuten warten.'
+        else:
+            pin = request.form.get('pin', '')
+            if pin == ADMIN_PIN:
+                _admin_attempts.pop(ip, None)
+                session['admin'] = True
+                return redirect(APP_URL + '/admin')
+            count += 1
+            _admin_attempts[ip] = (count, since)
+            err = 'Falscher PIN' if count < _ADMIN_MAX_ATTEMPTS else f'Zu viele Versuche. Bitte {_ADMIN_LOCKOUT_SECS // 60} Minuten warten.'
     return f'''<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Admin</title>
@@ -975,7 +997,6 @@ Beziehe dich auf die folgende Dokumentation:\n\n"""
 
 
 def build_dev_system(repo_path=None):
-    """Baut den Entwickler-System-Prompt mit optionalem Repo-Kontext aus .voiceai.md."""
     base = AGENT_SYSTEMS['developer']
     if not repo_path:
         return base
@@ -987,7 +1008,6 @@ def build_dev_system(repo_path=None):
 
 
 def _validate_path_in_repos(path):
-    """Stellt sicher dass path unter REPOS_BASE liegt (verhindert Path-Traversal)."""
     if not path:
         return None
     try:
@@ -1009,6 +1029,267 @@ def run_agent(messages, model='claude-sonnet-4-6', provider='anthropic', role='d
         return run_agent_mistral(messages, model, system, allowed_repos)
     else:
         return run_agent_anthropic(messages, model, system, allowed_repos)
+
+
+# ── Code-Agent ───────────────────────────────────────────────────────────────
+
+DEV_KEYWORDS = [
+    'implementiere', 'implementier', 'füge hinzu', 'füge ein', 'ergänze',
+    'erweitere', 'ändere', 'ändre', 'erstelle', 'baue', 'bau ein',
+    'refactor', 'überarbeite', 'lösche', 'entferne', 'korrigiere',
+    'fix', 'fixe', 'repariere', 'verbessere', 'mache', 'mach',
+    'schreibe', 'schreib', 'zeige', 'zeig', 'zeig mir', 'code',
+    'erzeuge', 'erzeugt', 'generiere', 'füge', 'hinzufügen', 'anpassen',
+]
+
+def is_dev_intent(text):
+    t = text.lower()
+    return any(kw in t for kw in DEV_KEYWORDS)
+
+CODE_AGENT_TOOLS = [
+    {
+        "name": "list_files",
+        "description": "Listet Dateien und Verzeichnisse in einem Pfad auf.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Verzeichnispfad relativ zum Repo-Root (leer = Root)"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "read_file",
+        "description": "Liest den Inhalt einer Datei.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Dateipfad relativ zum Repo-Root"}
+            },
+            "required": ["path"]
+        }
+    },
+    {
+        "name": "write_file",
+        "description": "Schreibt oder überschreibt eine Datei mit neuem Inhalt.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Dateipfad relativ zum Repo-Root"},
+                "content": {"type": "string", "description": "Vollständiger neuer Dateiinhalt"}
+            },
+            "required": ["path", "content"]
+        }
+    },
+    {
+        "name": "run_command",
+        "description": "Führt einen sicheren Shell-Befehl im Repo aus (nur lesende Befehle: git status, git diff, grep, find).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Shell-Befehl"}
+            },
+            "required": ["command"]
+        }
+    },
+]
+
+SAFE_COMMANDS = ['git status', 'git diff', 'git log', 'grep', 'find', 'ls', 'cat', 'head', 'tail', 'wc']
+
+def _run_code_tool(name, inputs, repo_path):
+    base = os.path.realpath(repo_path)
+    try:
+        if name == 'list_files':
+            rel = inputs.get('path', '')
+            target = os.path.realpath(os.path.join(base, rel)) if rel else base
+            if not target.startswith(base):
+                return 'Ungültiger Pfad'
+            items = []
+            for item in sorted(os.listdir(target)):
+                full = os.path.join(target, item)
+                items.append(('📁 ' if os.path.isdir(full) else '📄 ') + item)
+            return '\n'.join(items) if items else '(leer)'
+        elif name == 'read_file':
+            full = os.path.realpath(os.path.join(base, inputs['path']))
+            if not full.startswith(base):
+                return 'Ungültiger Pfad'
+            with open(full, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+            if len(content) > 10000:
+                content = content[:10000] + '\n... [gekürzt]'
+            return content
+        elif name == 'write_file':
+            full = os.path.realpath(os.path.join(base, inputs['path']))
+            if not full.startswith(base):
+                return 'Ungültiger Pfad'
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, 'w', encoding='utf-8') as f:
+                f.write(inputs['content'])
+            return f"✓ Datei geschrieben: {inputs['path']}"
+        elif name == 'run_command':
+            cmd = inputs['command']
+            if not any(cmd.startswith(safe) for safe in SAFE_COMMANDS):
+                return f'Befehl nicht erlaubt: {cmd}'
+            r = subprocess.run(cmd, shell=True, cwd=base, capture_output=True, text=True, timeout=15)
+            return (r.stdout + r.stderr)[:5000] or '(keine Ausgabe)'
+        return f'Unbekanntes Tool: {name}'
+    except Exception as e:
+        return f'Fehler: {e}'
+
+
+def run_claude_code(prompt, repo_path, sid, provider='anthropic'):
+    """Code-Agent über direkte API — Anthropic oder Mistral."""
+    if provider == 'mistral':
+        _run_code_agent_mistral(prompt, repo_path, sid)
+    else:
+        _run_code_agent_anthropic(prompt, repo_path, sid)
+
+
+def _load_repo_context(repo_path):
+    """Lädt .voiceai.md als Kontext falls vorhanden."""
+    vf = os.path.join(repo_path, '.voiceai.md')
+    try:
+        with open(vf, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception:
+        return None
+
+def _build_code_agent_system(repo_path):
+    context = _load_repo_context(repo_path)
+    base = f"""Du bist ein erfahrener Software-Entwickler. Du arbeitest im Repository: {repo_path}
+Deine Aufgabe: Den Entwicklungsauftrag des Users vollständig umsetzen.
+- Lies zuerst die relevanten Dateien um die Struktur zu verstehen
+- Schreibe dann die geänderten/neuen Dateien mit write_file
+- Berichte kurz was du gemacht hast
+- Antworte auf Deutsch
+- Schreibe vollständige Dateien, keine Ausschnitte"""
+    if context:
+        base += f"\n\n## Projekt-Kontext:\n{context}"
+    return base
+
+
+def _run_code_agent_anthropic(prompt, repo_path, sid):
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key:
+        socketio.emit('code_agent_output', {'text': '❌ ANTHROPIC_API_KEY nicht gesetzt.'}, to=sid)
+        socketio.emit('code_agent_done', {}, to=sid)
+        return
+
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key)
+
+    system = _build_code_agent_system(repo_path)
+    messages = [{"role": "user", "content": prompt}]
+    socketio.emit('code_agent_output', {'text': '🔍 Analysiere Aufgabe...\n'}, to=sid)
+
+    try:
+        while True:
+            response = client.messages.create(
+                model='claude-sonnet-4-6',
+                max_tokens=8096,
+                system=system,
+                tools=CODE_AGENT_TOOLS,
+                messages=messages,
+            )
+
+            # Text-Ausgabe streamen
+            for block in response.content:
+                if hasattr(block, 'text') and block.text:
+                    socketio.emit('code_agent_output', {'text': block.text}, to=sid)
+
+            if response.stop_reason == 'end_turn':
+                socketio.emit('code_agent_done', {'exit_code': 0}, to=sid)
+                return
+
+            if response.stop_reason == 'tool_use':
+                tool_results = []
+                for block in response.content:
+                    if block.type == 'tool_use':
+                        socketio.emit('code_agent_output', {'text': f'\n🔧 {block.name}: {list(block.input.values())[0] if block.input else ""}\n'}, to=sid)
+                        result = _run_code_tool(block.name, block.input, repo_path)
+                        if block.name == 'write_file':
+                            socketio.emit('code_agent_output', {'text': f'✅ {result}\n'}, to=sid)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result
+                        })
+                messages = messages + [
+                    {"role": "assistant", "content": response.content},
+                    {"role": "user", "content": tool_results}
+                ]
+            else:
+                socketio.emit('code_agent_done', {'exit_code': 0}, to=sid)
+                return
+
+    except Exception as e:
+        socketio.emit('code_agent_output', {'text': f'\n❌ Fehler: {e}'}, to=sid)
+        socketio.emit('code_agent_done', {'exit_code': 1}, to=sid)
+
+
+def _run_code_agent_mistral(prompt, repo_path, sid):
+    api_key = os.environ.get('MISTRAL_API_KEY', '')
+    if not api_key:
+        socketio.emit('code_agent_output', {'text': '❌ MISTRAL_API_KEY nicht gesetzt.'}, to=sid)
+        socketio.emit('code_agent_done', {}, to=sid)
+        return
+
+    from mistralai import Mistral
+    import json as _json
+    client = Mistral(api_key=api_key)
+
+    MISTRAL_CODE_TOOLS = [
+        {"type": "function", "function": {
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t["input_schema"]
+        }} for t in CODE_AGENT_TOOLS
+    ]
+
+    system = _build_code_agent_system(repo_path)
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": prompt}
+    ]
+    socketio.emit('code_agent_output', {'text': '🔍 Analysiere Aufgabe (Mistral)...\n'}, to=sid)
+
+    try:
+        while True:
+            response = client.chat.complete(
+                model='mistral-large-latest',
+                messages=messages,
+                tools=MISTRAL_CODE_TOOLS,
+                tool_choice='auto',
+            )
+            msg = response.choices[0].message
+            finish = response.choices[0].finish_reason
+
+            if msg.content:
+                socketio.emit('code_agent_output', {'text': msg.content}, to=sid)
+
+            if finish == 'tool_calls' and msg.tool_calls:
+                messages.append({"role": "assistant", "content": msg.content or "", "tool_calls": msg.tool_calls})
+                for tc in msg.tool_calls:
+                    try:
+                        inputs = _json.loads(tc.function.arguments)
+                    except Exception:
+                        inputs = {}
+                    socketio.emit('code_agent_output', {'text': f'\n🔧 {tc.function.name}: {list(inputs.values())[0] if inputs else ""}\n'}, to=sid)
+                    result = _run_code_tool(tc.function.name, inputs, repo_path)
+                    if tc.function.name == 'write_file':
+                        socketio.emit('code_agent_output', {'text': f'✅ {result}\n'}, to=sid)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result
+                    })
+            else:
+                socketio.emit('code_agent_done', {'exit_code': 0}, to=sid)
+                return
+
+    except Exception as e:
+        socketio.emit('code_agent_output', {'text': f'\n❌ Fehler: {e}'}, to=sid)
+        socketio.emit('code_agent_done', {'exit_code': 1}, to=sid)
 
 
 # ── Socket.IO ─────────────────────────────────────────────────────────────────
@@ -1091,6 +1372,35 @@ def handle_agent(data):
         emit('response', {'text': text, 'model': model_id + ' (Agent)'})
     except Exception as e:
         emit('error', {'message': str(e)})
+
+
+@socketio.on('code_agent')
+def handle_code_agent(data):
+    role = session.get('role', 'user')
+    if role not in ('developer', 'admin'):
+        emit('error', {'message': 'Code-Agent nur für Developer/Admin'})
+        return
+    prompt = data.get('prompt', '')
+    repo_path = data.get('repo_path', '')
+    if not prompt or not repo_path:
+        emit('error', {'message': 'Prompt und Repo-Pfad erforderlich'})
+        return
+    if not os.path.isdir(repo_path):
+        emit('error', {'message': f'Repo-Pfad nicht gefunden: {repo_path}'})
+        return
+    provider = data.get('provider', 'anthropic')
+    sid = request.sid
+    emit('code_agent_output', {'text': f'🤖 Code-Agent startet in: {repo_path}\n'})
+    import threading
+    t = threading.Thread(target=run_claude_code, args=(prompt, repo_path, sid, provider))
+    t.daemon = True
+    t.start()
+
+
+@socketio.on('check_dev_intent')
+def handle_check_intent(data):
+    text = data.get('text', '')
+    emit('dev_intent_result', {'is_dev': is_dev_intent(text), 'text': text})
 
 
 if __name__ == '__main__':
